@@ -1258,6 +1258,9 @@ class InstrumentService:
 
         return True, f"检测完成：成功导入 {len(valid_items)} 条，冲突 {len(conflicts)} 条", conflicts
 
+    def get_calibration_schedule_conflict_by_id(self, conflict_id: str) -> Optional[CalibrationScheduleConflict]:
+        return self.data_manager.get_calibration_schedule_conflict_by_id(conflict_id)
+
     def resolve_calibration_conflict(self, conflict_id: str,
                                      resolution: CalibrationConflictResolution,
                                      notes: str = ""

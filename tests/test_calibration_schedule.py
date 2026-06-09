@@ -559,11 +559,227 @@ def test_overdue_detection():
         print("  [OK] 逾期和快到期检测正常")
 
 
+def test_gui_dialog_construction_with_is_admin():
+    print("\n【测试10】GUI对话框is_admin参数传递（修复TypeError）")
+    print("-" * 60)
+
+    import tkinter as tk
+    from src.ui.dialogs import CalibrationScheduleDialog, CalibrationScheduleHistoryDialog
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dm = DataManager(data_dir=tmpdir)
+        service = InstrumentService(dm)
+        admin = User.create_admin_user("admin", "管理员")
+        service.set_current_user(admin)
+
+        create_test_instruments(service)
+
+        root = tk.Tk()
+        root.withdraw()
+
+        try:
+            print("  测试CalibrationScheduleDialog接受is_admin参数...")
+            dialog1 = CalibrationScheduleDialog(root, service, is_admin=True)
+            assert dialog1.is_admin == True, "is_admin应该为True"
+            dialog1.destroy()
+            print("    [OK] CalibrationScheduleDialog接受is_admin=True")
+
+            dialog2 = CalibrationScheduleDialog(root, service, is_admin=False)
+            assert dialog2.is_admin == False, "is_admin应该为False"
+            dialog2.destroy()
+            print("    [OK] CalibrationScheduleDialog接受is_admin=False")
+
+            dialog3 = CalibrationScheduleDialog(root, service)
+            assert dialog3.is_admin == True, "默认is_admin应该根据用户权限判断"
+            dialog3.destroy()
+            print("    [OK] CalibrationScheduleDialog默认is_admin正常")
+
+            print("  测试CalibrationScheduleHistoryDialog接受is_admin参数...")
+            dialog4 = CalibrationScheduleHistoryDialog(root, service, is_admin=True)
+            assert dialog4.is_admin == True, "is_admin应该为True"
+            dialog4.destroy()
+            print("    [OK] CalibrationScheduleHistoryDialog接受is_admin=True")
+
+            dialog5 = CalibrationScheduleHistoryDialog(root, service, is_admin=False)
+            assert dialog5.is_admin == False, "is_admin应该为False"
+            dialog5.destroy()
+            print("    [OK] CalibrationScheduleHistoryDialog接受is_admin=False")
+
+            print("  测试普通用户权限...")
+            regular_user = User.create_normal_user("user1", "普通用户")
+            service.set_current_user(regular_user)
+            dialog6 = CalibrationScheduleDialog(root, service)
+            assert dialog6.is_admin == False, "普通用户is_admin应该为False"
+            dialog6.destroy()
+            print("    [OK] 普通用户is_admin正确为False")
+
+        finally:
+            root.destroy()
+
+        print("  [OK] 所有GUI对话框is_admin参数传递正常")
+
+
+def test_service_get_calibration_schedule_conflict_by_id():
+    print("\n【测试11】服务层get_calibration_schedule_conflict_by_id方法（修复AttributeError）")
+    print("-" * 60)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dm = DataManager(data_dir=tmpdir)
+        service = InstrumentService(dm)
+        admin = User.create_admin_user("admin", "管理员")
+        service.set_current_user(admin)
+
+        create_test_instruments(service)
+
+        planned_date = date.today() + timedelta(days=7)
+        import_items = [
+            {'serial_number': 'SN001', 'planned_date': planned_date.isoformat(),
+             'calibration_agency': '计量院', 'certificate_number': 'CERT-GUI-001'},
+            {'serial_number': 'NOT_EXIST', 'planned_date': planned_date.isoformat(),
+             'calibration_agency': '计量院', 'certificate_number': 'CERT-GUI-002'},
+        ]
+
+        csv_path = os.path.join(tmpdir, 'gui_test.csv')
+        create_calibration_test_csv(csv_path, import_items)
+
+        print("  导入数据生成冲突...")
+        success, msg, schedule = service.create_calibration_schedule(
+            name="GUI测试排程", plan_date=date.today(), notes="测试"
+        )
+        assert success, f"创建排程应该成功: {msg}"
+        assert schedule is not None
+
+        success, msg, items = service.parse_calibration_schedule_file(csv_path)
+        assert success, f"解析文件应该成功: {msg}"
+
+        success, msg, conflicts = service.detect_calibration_conflicts(schedule.id, items)
+        assert success, f"检测冲突应该成功: {msg}"
+        assert len(conflicts) == 1, f"应该有1个冲突，实际有{len(conflicts)}个"
+
+        conflict = conflicts[0]
+        print(f"  生成冲突ID: {conflict.id}")
+
+        print("  测试服务层get_calibration_schedule_conflict_by_id方法存在...")
+        assert hasattr(service, 'get_calibration_schedule_conflict_by_id'), \
+            "服务层应该有get_calibration_schedule_conflict_by_id方法"
+        print("    [OK] 方法存在")
+
+        print("  测试通过ID获取冲突...")
+        fetched_conflict = service.get_calibration_schedule_conflict_by_id(conflict.id)
+        assert fetched_conflict is not None, "应该能获取到冲突"
+        assert fetched_conflict.id == conflict.id, "冲突ID应该匹配"
+        assert fetched_conflict.conflict_type == conflict.conflict_type, "冲突类型应该匹配"
+        assert fetched_conflict.serial_number == conflict.serial_number, "序列号应该匹配"
+        print("    [OK] 能正确获取冲突")
+
+        print("  测试获取不存在的冲突...")
+        not_found = service.get_calibration_schedule_conflict_by_id("non-existent-id")
+        assert not_found is None, "不存在的冲突应该返回None"
+        print("    [OK] 不存在的冲突返回None")
+
+        print("  [OK] 服务层get_calibration_schedule_conflict_by_id方法正常")
+
+
+def test_single_conflict_resolution_flow():
+    print("\n【测试12】单条冲突处理完整流程（修复选中冲突后处理的AttributeError）")
+    print("-" * 60)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dm = DataManager(data_dir=tmpdir)
+        service = InstrumentService(dm)
+        admin = User.create_admin_user("admin", "管理员")
+        service.set_current_user(admin)
+
+        instr1, instr2, instr3, instr4 = create_test_instruments(service)
+
+        planned_date = date.today() + timedelta(days=7)
+        import_items = [
+            {'serial_number': 'SN001', 'planned_date': planned_date.isoformat(),
+             'calibration_agency': '计量院', 'certificate_number': 'CERT-SINGLE-001'},
+            {'serial_number': 'NOT_EXIST', 'planned_date': planned_date.isoformat(),
+             'calibration_agency': '计量院', 'certificate_number': 'CERT-SINGLE-002'},
+            {'serial_number': 'SN002', 'planned_date': '',
+             'calibration_agency': '计量院', 'certificate_number': 'CERT-SINGLE-003'},
+        ]
+
+        csv_path = os.path.join(tmpdir, 'single_conflict_test.csv')
+        create_calibration_test_csv(csv_path, import_items)
+
+        print("  导入数据生成多个冲突...")
+        success, msg, schedule = service.create_calibration_schedule(
+            name="单条冲突处理测试", plan_date=date.today(), notes="测试单条处理"
+        )
+        assert success, f"创建排程应该成功: {msg}"
+        assert schedule is not None
+
+        success, msg, items = service.parse_calibration_schedule_file(csv_path)
+        assert success, f"解析文件应该成功: {msg}"
+
+        success, msg, conflicts = service.detect_calibration_conflicts(schedule.id, items)
+        assert success, f"检测冲突应该成功: {msg}"
+        assert len(conflicts) == 2, f"应该有2个冲突，实际有{len(conflicts)}个"
+
+        schedule = service.get_calibration_schedules()[0]
+        print(f"  排程ID: {schedule.id}")
+        print(f"  冲突数量: {len(conflicts)}")
+
+        print("  测试获取所有冲突...")
+        all_conflicts = service.get_calibration_schedule_conflicts(schedule.id)
+        assert len(all_conflicts) == 2, f"应该有2个冲突"
+        print("    [OK] 能获取所有冲突")
+
+        print("  测试选中第一条冲突进行处理...")
+        conflict1 = all_conflicts[0]
+        print(f"  处理冲突: {conflict1.conflict_type.value} - {conflict1.serial_number}")
+
+        success, msg, updated_conflict = service.resolve_calibration_conflict(
+            conflict_id=conflict1.id,
+            resolution=CalibrationConflictResolution.IGNORE,
+            notes="测试忽略"
+        )
+        assert success, f"处理应该成功: {msg}"
+        assert updated_conflict is not None, "应该返回更新后的冲突"
+        assert updated_conflict.resolution == CalibrationConflictResolution.IGNORE, "处理结果应该为忽略"
+        assert updated_conflict.resolved_by == admin.display_name, "处理人应该正确"
+        assert updated_conflict.resolved_at is not None, "处理时间应该设置"
+        print("    [OK] 第一条冲突处理成功")
+
+        print("  验证冲突已更新...")
+        fetched = service.get_calibration_schedule_conflict_by_id(conflict1.id)
+        assert fetched.resolution == CalibrationConflictResolution.IGNORE, "冲突状态应该已更新"
+        print("    [OK] 冲突状态已持久化")
+
+        print("  测试处理第二条冲突...")
+        conflict2 = all_conflicts[1]
+        print(f"  处理冲突: {conflict2.conflict_type.value} - {conflict2.serial_number}")
+
+        success, msg, updated_conflict2 = service.resolve_calibration_conflict(
+            conflict_id=conflict2.id,
+            resolution=CalibrationConflictResolution.CONFIRM,
+            notes="测试确认"
+        )
+        assert success, f"处理应该成功: {msg}"
+        assert updated_conflict2.resolution == CalibrationConflictResolution.CONFIRM, "处理结果应该为确认"
+        print("    [OK] 第二条冲突处理成功")
+
+        print("  验证所有冲突处理完毕后排程状态更新...")
+        schedule_after = service.get_calibration_schedule_by_id(schedule.id)
+        assert schedule_after.status == CalibrationScheduleStatus.COMPLETED, \
+            f"排程应该为完成状态，实际为{schedule_after.status.value}"
+        print(f"    [OK] 排程状态: {schedule_after.status.value}")
+
+        items = service.get_calibration_schedule_items(schedule.id)
+        print(f"  排程项目数量: {len(items)}")
+        assert len(items) >= 1, "应该至少有1条有效项目"
+
+        print("  [OK] 单条冲突处理完整流程正常")
+
+
 def run_all_tests():
     print("\n" + "=" * 70)
     print("校准排程功能回归测试")
     print("=" * 70)
-    
+
     test_csv_import_parsing()
     test_json_import_parsing()
     test_conflict_detection()
@@ -573,7 +789,10 @@ def run_all_tests():
     test_cross_restart_persistence()
     test_export_functionality()
     test_overdue_detection()
-    
+    test_gui_dialog_construction_with_is_admin()
+    test_service_get_calibration_schedule_conflict_by_id()
+    test_single_conflict_resolution_flow()
+
     print("\n" + "=" * 70)
     print("所有测试通过! [OK]")
     print("=" * 70)

@@ -1301,10 +1301,10 @@ class CalibrationScheduleCompleteDialog(BaseDialog):
 
 
 class CalibrationScheduleDialog(BaseDialog):
-    def __init__(self, parent, service: InstrumentService):
+    def __init__(self, parent, service: InstrumentService, is_admin: Optional[bool] = None):
         self.service = service
         self.user = service.get_current_user()
-        self.is_admin = self.user.can_calibrate()
+        self.is_admin = is_admin if is_admin is not None else self.user.can_calibrate()
         self.name_var = tk.StringVar(value=f"校准排程-{date.today().strftime('%Y%m')}")
         self.notes_var = tk.StringVar()
         self.filepath_var = tk.StringVar()
@@ -1763,10 +1763,10 @@ class CalibrationScheduleDialog(BaseDialog):
 
 
 class CalibrationScheduleHistoryDialog(BaseDialog):
-    def __init__(self, parent, service: InstrumentService):
+    def __init__(self, parent, service: InstrumentService, is_admin: Optional[bool] = None):
         self.service = service
         self.user = service.get_current_user()
-        self.is_admin = self.user.can_calibrate()
+        self.is_admin = is_admin if is_admin is not None else self.user.can_calibrate()
         super().__init__(parent, "校准排程历史", "950x550")
 
     def _create_content(self):

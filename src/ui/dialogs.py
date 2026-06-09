@@ -2151,10 +2151,12 @@ class ReservationExportDialog(BaseDialog):
 
 
 class ReservationDialog(BaseDialog):
-    def __init__(self, parent, service: InstrumentService):
+    def __init__(self, parent, service: InstrumentService,
+                 user: Optional[User] = None,
+                 is_admin: Optional[bool] = None):
         self.service = service
-        self.user = service.get_current_user()
-        self.is_admin = self.user.can_approve_reservations()
+        self.user = user if user else service.get_current_user()
+        self.is_admin = is_admin if is_admin is not None else self.user.can_approve_reservations()
         self.can_export_all = self.user.can_export_all_reservations()
 
         settings = self.service.get_settings()

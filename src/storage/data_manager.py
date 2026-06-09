@@ -68,6 +68,12 @@ class DataManager:
                     'category': '',
                     'search': '',
                 },
+                'last_reservation_filters': {
+                    'status': '',
+                    'department': '',
+                    'date_from': '',
+                    'date_to': '',
+                },
             },
             'metadata': {
                 'created_at': datetime.now().isoformat(),

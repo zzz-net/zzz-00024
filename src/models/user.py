@@ -51,6 +51,15 @@ class User:
     def can_borrow(self) -> bool:
         return True
 
+    def can_manage_reservations(self) -> bool:
+        return self.role in [UserRole.ADMIN, UserRole.MAINTENANCE]
+
+    def can_approve_reservations(self) -> bool:
+        return self.role in [UserRole.ADMIN, UserRole.MAINTENANCE]
+
+    def can_export_all_reservations(self) -> bool:
+        return self.role in [UserRole.ADMIN, UserRole.MAINTENANCE]
+
     def to_dict(self) -> dict:
         return {
             'username': self.username,

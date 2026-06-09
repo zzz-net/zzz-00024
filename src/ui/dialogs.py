@@ -1,7 +1,7 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from datetime import date, datetime, timedelta
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 import os
 
 from ..models import (
@@ -13,6 +13,8 @@ from ..models import (
     CalibrationScheduleItem, CalibrationScheduleItemStatus,
     CalibrationScheduleConflict, CalibrationConflictType,
     CalibrationConflictResolution,
+    Reservation, ReservationStatus,
+    InventoryItem,
 )
 from ..services import InstrumentService
 from ..storage import DataExporter
@@ -2009,3 +2011,544 @@ class CalibrationScheduleDetailDialog(BaseDialog):
         tree.tag_configure("确认导入", foreground="green")
         tree.tag_configure("忽略跳过", foreground="gray")
         tree.tag_configure("强制更新", foreground="blue")
+
+
+class ReservationApproveConflictDialog(BaseDialog):
+    def __init__(self, parent, reservation: Reservation,
+                 conflicts: list, inventory_item: InventoryItem,
+                 is_admin: bool = True):
+        self.reservation = reservation
+        self.conflicts = conflicts
+        self.inventory_item = inventory_item
+        self.is_admin = is_admin
+        self.reason_var = tk.StringVar()
+        super().__init__(parent, "库存冲突提示", "700x550")
+
+    def _create_content(self):
+        info_frame = ttk.LabelFrame(self.main_frame, text="待审批预约信息", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+
+        grid = ttk.Frame(info_frame)
+        grid.pack(fill=tk.X)
+
+        ttk.Label(grid, text="库存项:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(grid, text=self.inventory_item.name, font=('bold', 10)).grid(row=0, column=1, sticky=tk.W)
+
+        ttk.Label(grid, text="申请人:").grid(row=0, column=2, sticky=tk.W, padx=(20, 0))
+        ttk.Label(grid, text=self.reservation.requester).grid(row=0, column=3, sticky=tk.W)
+
+        ttk.Label(grid, text="部门:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=self.reservation.department).grid(row=1, column=1, sticky=tk.W, pady=5)
+
+        ttk.Label(grid, text="预计使用日期:").grid(row=1, column=2, sticky=tk.W, padx=(20, 0), pady=5)
+        ttk.Label(grid, text=self.reservation.expected_use_date.isoformat()).grid(row=1, column=3, sticky=tk.W, pady=5)
+
+        ttk.Label(grid, text="申请数量:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=f"{self.reservation.quantity} {self.inventory_item.unit}", foreground="blue", font=('bold', 10)).grid(row=2, column=1, sticky=tk.W, pady=5)
+
+        stock_frame = ttk.Frame(info_frame)
+        stock_frame.pack(fill=tk.X, pady=(10, 0))
+
+        ttk.Label(stock_frame, text=f"总库存: {self.inventory_item.total_quantity} {self.inventory_item.unit}").pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Label(stock_frame, text=f"可用数量: {self.inventory_item.available_quantity} {self.inventory_item.unit}", foreground="green").pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Label(stock_frame, text=f"已锁定: {self.inventory_item.locked_quantity} {self.inventory_item.unit}", foreground="orange").pack(side=tk.LEFT)
+
+        conflict_frame = ttk.LabelFrame(self.main_frame, text=f"冲突记录（共 {len(self.conflicts)} 条）", padding="10")
+        conflict_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        columns = ("requester", "department", "quantity", "status", "created_at")
+        self.conflict_tree = ttk.Treeview(conflict_frame, columns=columns, show="headings", height=8)
+
+        headings = [
+            ("requester", "申请人", 100),
+            ("department", "部门", 100),
+            ("quantity", "数量", 80),
+            ("status", "状态", 80),
+            ("created_at", "创建时间", 150),
+        ]
+        for col, text, width in headings:
+            self.conflict_tree.heading(col, text=text)
+            self.conflict_tree.column(col, width=width, anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(conflict_frame, orient=tk.VERTICAL, command=self.conflict_tree.yview)
+        self.conflict_tree.configure(yscrollcommand=scrollbar.set)
+
+        self.conflict_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for c in self.conflicts:
+            self.conflict_tree.insert("", tk.END, values=(
+                c.requester,
+                c.department,
+                f"{c.quantity} {self.inventory_item.unit}",
+                c.status.value,
+                c.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            ), tags=(c.status.value,))
+
+        self.conflict_tree.tag_configure("已审批", foreground="green")
+        self.conflict_tree.tag_configure("待审批", foreground="darkorange")
+
+        warning_label = ttk.Label(self.main_frame, text="⚠️  同一库存项在同一天存在冲突预约，审批可能导致库存不足", foreground="red", font=('bold', 10))
+        warning_label.pack(pady=(0, 10))
+
+        if self.is_admin:
+            reason_frame = ttk.LabelFrame(self.main_frame, text="审批原因（必填）", padding="10")
+            reason_frame.pack(fill=tk.X)
+
+            ttk.Label(reason_frame, text="请说明强制审批的原因:").pack(anchor=tk.W)
+            ttk.Entry(reason_frame, textvariable=self.reason_var, width=80).pack(fill=tk.X, pady=(5, 0))
+        else:
+            ttk.Label(self.main_frame, text="普通用户仅可查看，无法审批",
+                      foreground="red", font=('bold', 10)).pack(pady=10)
+
+    def _on_ok(self):
+        if not self.is_admin:
+            self.result = False
+            super()._on_cancel()
+            return
+
+        reason = self.reason_var.get().strip()
+        if not reason:
+            messagebox.showerror("错误", "请输入审批原因", parent=self)
+            return
+
+        self.result = {
+            'reason': reason
+        }
+        super()._on_ok()
+
+
+class ReservationExportDialog(BaseDialog):
+    def __init__(self, parent, export_dir: str, record_count: int):
+        self.export_dir = export_dir
+        self.record_count = record_count
+        self.format_var = tk.StringVar(value="csv")
+        super().__init__(parent, "导出预约", "400x250")
+
+    def _create_content(self):
+        info_label = ttk.Label(self.main_frame, text=f"将导出 {self.record_count} 条预约记录", font=('bold', 10))
+        info_label.pack(pady=(0, 20))
+
+        form_frame = ttk.Frame(self.main_frame)
+        form_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(form_frame, text="导出格式:").grid(row=0, column=0, sticky=tk.W, pady=10)
+        format_frame = ttk.Frame(form_frame)
+        format_frame.grid(row=0, column=1, sticky=tk.W, pady=10, padx=(10, 0))
+        ttk.Radiobutton(format_frame, text="CSV", variable=self.format_var, value="csv").pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(format_frame, text="JSON", variable=self.format_var, value="json").pack(side=tk.LEFT)
+
+        ttk.Label(form_frame, text="导出目录:").grid(row=1, column=0, sticky=tk.W, pady=10)
+        ttk.Label(form_frame, text=self.export_dir, wraplength=250).grid(row=1, column=1, sticky=tk.W, pady=10, padx=(10, 0))
+
+        form_frame.columnconfigure(1, weight=1)
+
+    def _on_ok(self):
+        self.result = {
+            'format': self.format_var.get(),
+        }
+        super()._on_ok()
+
+
+class ReservationDialog(BaseDialog):
+    def __init__(self, parent, service: InstrumentService):
+        self.service = service
+        self.user = service.get_current_user()
+        self.is_admin = self.user.can_approve_reservations()
+        self.can_export_all = self.user.can_export_all_reservations()
+
+        settings = self.service.get_settings()
+        saved_filters = settings.get('last_reservation_filters', {})
+        self.status_filter_var = tk.StringVar(value=saved_filters.get('status', ''))
+        self.department_filter_var = tk.StringVar(value=saved_filters.get('department', ''))
+        self.date_from_var = tk.StringVar(value=saved_filters.get('date_from', ''))
+        self.date_to_var = tk.StringVar(value=saved_filters.get('date_to', ''))
+
+        self.selected_reservation: Optional[Reservation] = None
+        self.current_reservations: List[Reservation] = []
+
+        super().__init__(parent, "预约管理工作台", "1100x700")
+
+    def _create_content(self):
+        self._create_filters()
+        self._create_reservation_list()
+        self._create_buttons()
+        self._refresh_reservations()
+
+    def _create_filters(self):
+        filter_frame = ttk.LabelFrame(self.main_frame, text="筛选条件", padding="10")
+        filter_frame.pack(fill=tk.X, pady=(0, 10))
+
+        grid = ttk.Frame(filter_frame)
+        grid.pack(fill=tk.X)
+
+        ttk.Label(grid, text="状态:").grid(row=0, column=0, sticky=tk.W)
+        status_values = [""] + [s.value for s in ReservationStatus]
+        status_combo = ttk.Combobox(grid, textvariable=self.status_filter_var,
+                                     values=status_values, state="readonly", width=15)
+        status_combo.grid(row=0, column=1, padx=(5, 20))
+        status_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_reservations())
+
+        ttk.Label(grid, text="申请部门:").grid(row=0, column=2, sticky=tk.W)
+        departments = [""] + self.service.get_reservation_departments()
+        dept_combo = ttk.Combobox(grid, textvariable=self.department_filter_var,
+                                   values=departments, state="readonly", width=15)
+        dept_combo.grid(row=0, column=3, padx=(5, 20))
+        dept_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_reservations())
+
+        ttk.Label(grid, text="预计使用日期:").grid(row=0, column=4, sticky=tk.W)
+        date_frame = ttk.Frame(grid)
+        date_frame.grid(row=0, column=5, padx=(5, 0))
+        ttk.Entry(date_frame, textvariable=self.date_from_var, width=12).pack(side=tk.LEFT)
+        ttk.Label(date_frame, text=" 至 ").pack(side=tk.LEFT)
+        ttk.Entry(date_frame, textvariable=self.date_to_var, width=12).pack(side=tk.LEFT)
+
+        ttk.Button(grid, text="查询", command=self._refresh_reservations).grid(row=0, column=6, padx=(10, 5))
+        ttk.Button(grid, text="重置", command=self._on_reset_filters).grid(row=0, column=7)
+
+        grid.columnconfigure(5, weight=1)
+
+    def _create_reservation_list(self):
+        list_frame = ttk.LabelFrame(self.main_frame, text="预约列表", padding="10")
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        columns = ("requester", "department", "item_name", "quantity", "expected_date",
+                   "purpose", "status", "approver", "approved_at", "created_at")
+        self.tree = ttk.Treeview(list_frame, columns=columns, show="headings")
+
+        headings = [
+            ("requester", "申请人", 80),
+            ("department", "部门", 100),
+            ("item_name", "库存项", 150),
+            ("quantity", "数量", 80),
+            ("expected_date", "预计使用日期", 120),
+            ("purpose", "用途", 150),
+            ("status", "状态", 80),
+            ("approver", "审批人", 80),
+            ("approved_at", "审批时间", 120),
+            ("created_at", "创建时间", 120),
+        ]
+        for col, text, width in headings:
+            self.tree.heading(col, text=text)
+            self.tree.column(col, width=width, anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.empty_label = ttk.Label(list_frame, text="", foreground="gray", font=('bold', 12))
+        self.empty_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+
+        self.tree.bind("<<TreeviewSelect>>", self._on_select_reservation)
+        self.tree.bind("<Double-1>", self._on_double_click)
+
+    def _create_buttons(self):
+        btn_frame = ttk.Frame(self.main_frame)
+        btn_frame.pack(fill=tk.X, pady=(0, 5))
+
+        if self.is_admin:
+            self.approve_btn = ttk.Button(btn_frame, text="审批通过", command=self._on_approve, state=tk.DISABLED)
+            self.approve_btn.pack(side=tk.LEFT, padx=5)
+
+            self.reject_btn = ttk.Button(btn_frame, text="拒绝", command=self._on_reject, state=tk.DISABLED)
+            self.reject_btn.pack(side=tk.LEFT, padx=5)
+
+        self.cancel_btn = ttk.Button(btn_frame, text="取消预约", command=self._on_cancel, state=tk.DISABLED)
+        self.cancel_btn.pack(side=tk.LEFT, padx=5)
+
+        if self.is_admin:
+            self.reschedule_btn = ttk.Button(btn_frame, text="改期", command=self._on_reschedule, state=tk.DISABLED)
+            self.reschedule_btn.pack(side=tk.LEFT, padx=5)
+
+            self.fulfill_btn = ttk.Button(btn_frame, text="领用确认", command=self._on_fulfill, state=tk.DISABLED)
+            self.fulfill_btn.pack(side=tk.LEFT, padx=5)
+
+        self.export_btn = ttk.Button(btn_frame, text="导出当前结果", command=self._on_export)
+        self.export_btn.pack(side=tk.RIGHT, padx=5)
+
+        self.refresh_btn = ttk.Button(btn_frame, text="刷新", command=self._refresh_reservations)
+        self.refresh_btn.pack(side=tk.RIGHT, padx=5)
+
+        self.count_label = ttk.Label(btn_frame, text="", style="Status.TLabel")
+        self.count_label.pack(side=tk.LEFT, padx=(20, 0))
+
+    def _save_filters(self):
+        settings = self.service.get_settings()
+        settings['last_reservation_filters'] = {
+            'status': self.status_filter_var.get(),
+            'department': self.department_filter_var.get(),
+            'date_from': self.date_from_var.get(),
+            'date_to': self.date_to_var.get(),
+        }
+        self.service.update_settings(settings)
+
+    def _get_filters(self):
+        status_filter = self.status_filter_var.get() or None
+        department_filter = self.department_filter_var.get() or None
+        date_from = None
+        date_to = None
+
+        if self.date_from_var.get().strip():
+            try:
+                date_from = date.fromisoformat(self.date_from_var.get().strip())
+            except ValueError:
+                messagebox.showerror("错误", "开始日期格式不正确，请使用YYYY-MM-DD格式", parent=self)
+                return None
+
+        if self.date_to_var.get().strip():
+            try:
+                date_to = date.fromisoformat(self.date_to_var.get().strip())
+            except ValueError:
+                messagebox.showerror("错误", "结束日期格式不正确，请使用YYYY-MM-DD格式", parent=self)
+                return None
+
+        requester_filter = None
+        if not self.can_export_all:
+            requester_filter = self.user.display_name
+
+        return {
+            'status_filter': status_filter,
+            'department_filter': department_filter,
+            'date_from': date_from,
+            'date_to': date_to,
+            'requester_filter': requester_filter,
+        }
+
+    def _refresh_reservations(self):
+        filters = self._get_filters()
+        if filters is None:
+            return
+
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        reservations = self.service.get_reservations_filtered(**filters)
+        self.current_reservations = reservations
+
+        inventory_items = self.service.get_inventory_items()
+        item_map = {i.id: i.name for i in inventory_items}
+
+        for r in reservations:
+            item_name = item_map.get(r.inventory_item_id, "未知")
+            approved_at = r.approved_at.strftime("%Y-%m-%d %H:%M:%S") if r.approved_at else ""
+
+            self.tree.insert("", tk.END, iid=r.id, values=(
+                r.requester,
+                r.department,
+                item_name,
+                f"{r.quantity}",
+                r.expected_use_date.isoformat(),
+                r.purpose,
+                r.status.value,
+                r.approver or "",
+                approved_at,
+                r.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            ), tags=(r.status.value,))
+
+        self.tree.tag_configure("待审批", foreground="darkorange")
+        self.tree.tag_configure("已审批", foreground="green")
+        self.tree.tag_configure("已拒绝", foreground="red")
+        self.tree.tag_configure("已取消", foreground="gray")
+        self.tree.tag_configure("已领用", foreground="blue")
+        self.tree.tag_configure("已改期", foreground="purple")
+
+        if not reservations:
+            self.empty_label.config(text="没有找到符合条件的预约记录\n请尝试调整筛选条件")
+            self.empty_label.lift()
+        else:
+            self.empty_label.config(text="")
+            self.empty_label.lower()
+
+        permission_note = "" if self.can_export_all else f"（仅显示您的预约）"
+        self.count_label.config(text=f"共 {len(reservations)} 条记录{permission_note}")
+
+        self._save_filters()
+        self._update_button_states()
+
+    def _on_reset_filters(self):
+        self.status_filter_var.set("")
+        self.department_filter_var.set("")
+        self.date_from_var.set("")
+        self.date_to_var.set("")
+        self._refresh_reservations()
+
+    def _on_select_reservation(self, event):
+        selection = self.tree.selection()
+        if selection:
+            reservation_id = selection[0]
+            self.selected_reservation = self.service.get_reservation_by_id(reservation_id)
+        else:
+            self.selected_reservation = None
+        self._update_button_states()
+
+    def _on_double_click(self, event):
+        if self.selected_reservation and self.is_admin:
+            self._on_approve()
+
+    def _update_button_states(self):
+        has_selection = self.selected_reservation is not None
+        r = self.selected_reservation
+        user = self.user
+
+        if has_selection and r:
+            can_edit_own = not self.is_admin and r.requester == user.display_name
+
+            if self.is_admin:
+                can_approve, _ = r.can_approve()
+                self.approve_btn.config(state=tk.NORMAL if can_approve else tk.DISABLED)
+
+                can_reject, _ = r.can_reject()
+                self.reject_btn.config(state=tk.NORMAL if can_reject else tk.DISABLED)
+
+                can_reschedule, _ = r.can_reschedule()
+                self.reschedule_btn.config(state=tk.NORMAL if can_reschedule else tk.DISABLED)
+
+                can_fulfill, _ = r.can_fulfill()
+                self.fulfill_btn.config(state=tk.NORMAL if can_fulfill else tk.DISABLED)
+
+            can_cancel, _ = r.can_cancel()
+            if self.is_admin or can_edit_own:
+                self.cancel_btn.config(state=tk.NORMAL if can_cancel else tk.DISABLED)
+            else:
+                self.cancel_btn.config(state=tk.DISABLED)
+        else:
+            if self.is_admin:
+                self.approve_btn.config(state=tk.DISABLED)
+                self.reject_btn.config(state=tk.DISABLED)
+                self.reschedule_btn.config(state=tk.DISABLED)
+                self.fulfill_btn.config(state=tk.DISABLED)
+            self.cancel_btn.config(state=tk.DISABLED)
+
+        self.export_btn.config(state=tk.NORMAL if self.current_reservations else tk.DISABLED)
+
+    def _on_approve(self):
+        if not self.selected_reservation or not self.is_admin:
+            return
+
+        success, msg, conflicts, item = self.service.detect_reservation_conflicts(self.selected_reservation.id)
+        if not success:
+            messagebox.showerror("错误", msg, parent=self)
+            return
+
+        if conflicts and item:
+            dialog = ReservationApproveConflictDialog(self, self.selected_reservation, conflicts, item, self.is_admin)
+            if dialog.show() and dialog.result:
+                reason = dialog.result['reason']
+                success, msg, _ = self.service.approve_reservation_with_conflict(
+                    self.selected_reservation.id, reason
+                )
+                if success:
+                    self._refresh_reservations()
+                    messagebox.showinfo("成功", msg, parent=self)
+                else:
+                    messagebox.showerror("审批失败", msg, parent=self)
+        else:
+            if not messagebox.askyesno("确认审批", f"确定要审批通过该预约吗？\n\n申请人: {self.selected_reservation.requester}\n库存项: {item.name if item else '未知'}\n数量: {self.selected_reservation.quantity}", parent=self):
+                return
+
+            success, msg, _ = self.service.approve_reservation_with_conflict(self.selected_reservation.id)
+            if success:
+                self._refresh_reservations()
+                messagebox.showinfo("成功", msg, parent=self)
+            else:
+                messagebox.showerror("审批失败", msg, parent=self)
+
+    def _on_reject(self):
+        if not self.selected_reservation or not self.is_admin:
+            return
+
+        reason = simpledialog.askstring("拒绝原因", "请输入拒绝原因:", parent=self)
+        if reason is None:
+            return
+
+        success, msg, _ = self.service.reject_reservation(self.selected_reservation.id, reason)
+        if success:
+            self._refresh_reservations()
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("拒绝失败", msg, parent=self)
+
+    def _on_cancel(self):
+        if not self.selected_reservation:
+            return
+
+        if not self.is_admin and self.selected_reservation.requester != self.user.display_name:
+            messagebox.showerror("权限不足", "您只能取消自己的预约", parent=self)
+            return
+
+        reason = simpledialog.askstring("取消原因", "请输入取消原因:", parent=self)
+        if reason is None:
+            return
+
+        success, msg, _ = self.service.cancel_reservation(self.selected_reservation.id, reason)
+        if success:
+            self._refresh_reservations()
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("取消失败", msg, parent=self)
+
+    def _on_reschedule(self):
+        if not self.selected_reservation or not self.is_admin:
+            return
+
+        new_date_str = simpledialog.askstring(
+            "改期",
+            "请输入新的预计使用日期 (YYYY-MM-DD):",
+            initialvalue=self.selected_reservation.expected_use_date.isoformat(),
+            parent=self
+        )
+        if new_date_str is None:
+            return
+
+        try:
+            new_date = date.fromisoformat(new_date_str.strip())
+        except ValueError:
+            messagebox.showerror("错误", "日期格式不正确", parent=self)
+            return
+
+        success, msg, _ = self.service.reschedule_reservation(self.selected_reservation.id, new_date)
+        if success:
+            self._refresh_reservations()
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("改期失败", msg, parent=self)
+
+    def _on_fulfill(self):
+        if not self.selected_reservation or not self.is_admin:
+            return
+
+        if not messagebox.askyesno("确认领用", f"确定要确认领用该预约吗？\n\n申请人: {self.selected_reservation.requester}\n数量: {self.selected_reservation.quantity}\n\n确认后库存将扣减。", parent=self):
+            return
+
+        success, msg, _ = self.service.fulfill_reservation(self.selected_reservation.id)
+        if success:
+            self._refresh_reservations()
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("领用失败", msg, parent=self)
+
+    def _on_export(self):
+        if not self.current_reservations:
+            messagebox.showinfo("提示", "没有可导出的记录", parent=self)
+            return
+
+        settings = self.service.get_settings()
+        export_dir = settings.get('export_dir', '')
+
+        dialog = ReservationExportDialog(self, export_dir, len(self.current_reservations))
+        if dialog.show() and dialog.result:
+            format_type = dialog.result['format']
+            success, msg, filepath = self.service.export_reservations(
+                self.current_reservations, format_type, export_dir
+            )
+            if success:
+                messagebox.showinfo("导出成功", f"{msg}\n\n文件已保存到:\n{filepath}", parent=self)
+                if hasattr(os, 'startfile'):
+                    try:
+                        os.startfile(os.path.dirname(filepath))
+                    except Exception:
+                        pass
+            else:
+                messagebox.showerror("导出失败", msg, parent=self)

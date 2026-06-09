@@ -26,6 +26,7 @@ from .dialogs import (
     CalibrationScheduleDialog,
     CalibrationScheduleHistoryDialog,
     CalibrationScheduleDetailDialog,
+    ReservationDialog,
 )
 
 
@@ -87,6 +88,10 @@ class MainWindow(ttk.Frame):
         self.undo_calibration_btn = ttk.Button(left_frame, text="撤销校准", command=self._on_undo_calibration, state=tk.DISABLED)
         self.undo_calibration_btn.pack(side=tk.LEFT, padx=5)
         ttk.Button(left_frame, text="排程历史", command=self._on_calibration_schedule_history).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(left_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        ttk.Button(left_frame, text="预约管理", command=self._on_reservation_management).pack(side=tk.LEFT, padx=5)
         
         ttk.Separator(left_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
         
@@ -677,4 +682,11 @@ class MainWindow(ttk.Frame):
         user = self.service.get_current_user()
         is_admin = user.can_calibrate()
         dialog = CalibrationScheduleHistoryDialog(self.parent, self.service, is_admin=is_admin)
+        dialog.show()
+
+    def _on_reservation_management(self):
+        from .dialogs import ReservationDialog
+        user = self.service.get_current_user()
+        is_admin = user.can_manage_reservations()
+        dialog = ReservationDialog(self.parent, self.service, user=user, is_admin=is_admin)
         dialog.show()

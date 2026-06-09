@@ -18,6 +18,10 @@ class OperationType(str, Enum):
     CALIBRATION_SCHEDULE_IMPORT = "校准排程导入"
     CALIBRATION_SCHEDULE_COMPLETE = "校准排程完成"
     CALIBRATION_SCHEDULE_UNDO = "校准排程撤销"
+    RESERVATION_APPROVE = "预约审批"
+    RESERVATION_REJECT = "预约拒绝"
+    RESERVATION_CANCEL = "预约取消"
+    RESERVATION_EXPORT = "预约导出"
 
 
 @dataclass

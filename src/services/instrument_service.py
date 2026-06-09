@@ -19,7 +19,7 @@ from ..models import (
     CalibrationScheduleConflict, CalibrationConflictType,
     CalibrationConflictResolution,
 )
-from ..storage import DataManager
+from ..storage import DataManager, DataExporter
 
 
 class InstrumentService:
@@ -492,44 +492,6 @@ class InstrumentService:
         
         return True, "审批通过，库存已锁定", reservation
 
-    def reject_reservation(self, reservation_id: str, reason: str = "") -> Tuple[bool, str, Optional[Reservation]]:
-        user = self.get_current_user()
-        reservation = self.data_manager.get_reservation_by_id(reservation_id)
-        if not reservation:
-            return False, "预约不存在", None
-        
-        can_reject, reject_reason = reservation.can_reject()
-        if not can_reject:
-            return False, reject_reason, None
-        
-        reservation.mark_rejected(user.display_name, reason)
-        self.data_manager.update_reservation(reservation)
-        
-        return True, "预约已拒绝", reservation
-
-    def cancel_reservation(self, reservation_id: str, reason: str = "") -> Tuple[bool, str, Optional[Reservation]]:
-        user = self.get_current_user()
-        reservation = self.data_manager.get_reservation_by_id(reservation_id)
-        if not reservation:
-            return False, "预约不存在", None
-        
-        can_cancel, cancel_reason = reservation.can_cancel()
-        if not can_cancel:
-            return False, cancel_reason, None
-        
-        was_approved = reservation.status == ReservationStatus.APPROVED
-        
-        reservation.mark_cancelled(user.display_name, reason)
-        self.data_manager.update_reservation(reservation)
-        
-        if was_approved:
-            item = self.get_inventory_item_by_id(reservation.inventory_item_id)
-            if item:
-                item.unlock(reservation.quantity)
-                self.data_manager.update_inventory_item(item)
-        
-        return True, "预约已取消", reservation
-
     def reschedule_reservation(self, reservation_id: str, new_use_date: date,
                                new_quantity: Optional[int] = None
                                ) -> Tuple[bool, str, Optional[Reservation]]:
@@ -620,6 +582,219 @@ class InstrumentService:
 
     def get_reservation_by_id(self, reservation_id: str) -> Optional[Reservation]:
         return self.data_manager.get_reservation_by_id(reservation_id)
+
+    def get_reservations_filtered(self,
+                                   status_filter: Optional[str] = None,
+                                   department_filter: Optional[str] = None,
+                                   date_from: Optional[date] = None,
+                                   date_to: Optional[date] = None,
+                                   requester_filter: Optional[str] = None) -> List[Reservation]:
+        user = self.get_current_user()
+        reservations = self.data_manager.get_reservations()
+
+        if not user.can_export_all_reservations():
+            requester_filter = user.display_name
+
+        if status_filter:
+            reservations = [r for r in reservations if r.status.value == status_filter]
+
+        if department_filter:
+            reservations = [r for r in reservations if r.department == department_filter]
+
+        if date_from:
+            reservations = [r for r in reservations if r.expected_use_date >= date_from]
+
+        if date_to:
+            reservations = [r for r in reservations if r.expected_use_date <= date_to]
+
+        if requester_filter:
+            reservations = [r for r in reservations if r.requester == requester_filter]
+
+        return sorted(reservations, key=lambda r: r.created_at, reverse=True)
+
+    def get_reservation_departments(self) -> List[str]:
+        reservations = self.data_manager.get_reservations()
+        departments = sorted({r.department for r in reservations})
+        return departments
+
+    def detect_reservation_conflicts(self, reservation_id: str) -> Tuple[bool, str, List[Reservation], Optional[InventoryItem]]:
+        user = self.get_current_user()
+        if not user.can_approve_reservations():
+            return False, "您没有审批预约的权限", [], None
+
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", [], None
+
+        can_approve, reason = reservation.can_approve()
+        if not can_approve:
+            return False, reason, [], None
+
+        item = self.get_inventory_item_by_id(reservation.inventory_item_id)
+        if not item:
+            return False, "关联的库存项不存在", [], None
+
+        all_reservations = self.data_manager.get_reservations(reservation.inventory_item_id)
+        conflicts = [
+            r for r in all_reservations
+            if r.id != reservation.id
+            and r.expected_use_date == reservation.expected_use_date
+            and r.status in [ReservationStatus.APPROVED, ReservationStatus.PENDING]
+        ]
+
+        return len(conflicts) > 0, "", conflicts, item
+
+    def approve_reservation_with_conflict(self,
+                                          reservation_id: str,
+                                          conflict_reason: str = "") -> Tuple[bool, str, Optional[Reservation]]:
+        user = self.get_current_user()
+        if not user.can_approve_reservations():
+            return False, "您没有审批预约的权限", None
+
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+
+        can_approve, reason = reservation.can_approve()
+        if not can_approve:
+            return False, reason, None
+
+        item = self.get_inventory_item_by_id(reservation.inventory_item_id)
+        if not item:
+            return False, "关联的库存项不存在", None
+
+        if conflict_reason:
+            reservation.notes = (reservation.notes + "\n" if reservation.notes else "") + f"冲突审批原因: {conflict_reason}"
+
+        success, msg, reservation = self.approve_reservation(reservation_id)
+        if success:
+            history = OperationHistory.create(
+                instrument_id="",
+                operation_type=OperationType.RESERVATION_APPROVE,
+                operator=user.display_name,
+                details=f"审批预约[{reservation.id}]: {item.name} {reservation.quantity}{item.unit}, 日期: {reservation.expected_use_date.isoformat()}" + (f", 冲突原因: {conflict_reason}" if conflict_reason else ""),
+                related_record_id=reservation.id,
+            )
+            self.data_manager.add_operation_history(history)
+
+        return success, msg, reservation
+
+    def reject_reservation(self, reservation_id: str, reason: str = "") -> Tuple[bool, str, Optional[Reservation]]:
+        user = self.get_current_user()
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+
+        if not user.can_approve_reservations():
+            return False, "您没有拒绝预约的权限", None
+
+        success, msg, reservation = self._reject_reservation_internal(reservation_id, reason)
+        if success:
+            item = self.get_inventory_item_by_id(reservation.inventory_item_id)
+            item_name = item.name if item else "未知"
+            history = OperationHistory.create(
+                instrument_id="",
+                operation_type=OperationType.RESERVATION_REJECT,
+                operator=user.display_name,
+                details=f"拒绝预约[{reservation.id}]: {item_name} {reservation.quantity}, 日期: {reservation.expected_use_date.isoformat()}, 原因: {reason}",
+                related_record_id=reservation.id,
+            )
+            self.data_manager.add_operation_history(history)
+
+        return success, msg, reservation
+
+    def _reject_reservation_internal(self, reservation_id: str, reason: str = "") -> Tuple[bool, str, Optional[Reservation]]:
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+
+        can_reject, reject_reason = reservation.can_reject()
+        if not can_reject:
+            return False, reject_reason, None
+
+        user = self.get_current_user()
+        reservation.mark_rejected(user.display_name, reason)
+        self.data_manager.update_reservation(reservation)
+
+        return True, "预约已拒绝", reservation
+
+    def cancel_reservation(self, reservation_id: str, reason: str = "") -> Tuple[bool, str, Optional[Reservation]]:
+        user = self.get_current_user()
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+
+        if not user.can_approve_reservations() and reservation.requester != user.display_name:
+            return False, "您只能取消自己的预约", None
+
+        success, msg, reservation = self._cancel_reservation_internal(reservation_id, reason)
+        if success:
+            item = self.get_inventory_item_by_id(reservation.inventory_item_id)
+            item_name = item.name if item else "未知"
+            history = OperationHistory.create(
+                instrument_id="",
+                operation_type=OperationType.RESERVATION_CANCEL,
+                operator=user.display_name,
+                details=f"取消预约[{reservation.id}]: {item_name} {reservation.quantity}, 日期: {reservation.expected_use_date.isoformat()}, 原因: {reason}",
+                related_record_id=reservation.id,
+            )
+            self.data_manager.add_operation_history(history)
+
+        return success, msg, reservation
+
+    def _cancel_reservation_internal(self, reservation_id: str, reason: str = "") -> Tuple[bool, str, Optional[Reservation]]:
+        user = self.get_current_user()
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+
+        can_cancel, cancel_reason = reservation.can_cancel()
+        if not can_cancel:
+            return False, cancel_reason, None
+
+        was_approved = reservation.status == ReservationStatus.APPROVED
+
+        reservation.mark_cancelled(user.display_name, reason)
+        self.data_manager.update_reservation(reservation)
+
+        if was_approved:
+            item = self.get_inventory_item_by_id(reservation.inventory_item_id)
+            if item:
+                item.unlock(reservation.quantity)
+                self.data_manager.update_inventory_item(item)
+
+        return True, "预约已取消", reservation
+
+    def export_reservations(self,
+                            reservations: List[Reservation],
+                            format_type: str,
+                            export_dir: str) -> Tuple[bool, str, Optional[str]]:
+        user = self.get_current_user()
+
+        try:
+            filename = DataExporter.generate_export_filename("reservations", format_type, export_dir)
+            inventory_items = self.get_inventory_items()
+
+            if format_type == "csv":
+                filepath = DataExporter.export_reservations_to_csv(reservations, filename, inventory_items)
+            elif format_type == "json":
+                filepath = DataExporter.export_reservations_to_json(reservations, filename)
+            else:
+                return False, f"不支持的导出格式: {format_type}", None
+
+            details = f"导出预约 {len(reservations)} 条，格式: {format_type.upper()}"
+            history = OperationHistory.create(
+                instrument_id="",
+                operation_type=OperationType.RESERVATION_EXPORT,
+                operator=user.display_name,
+                details=details,
+                related_record_id="",
+            )
+            self.data_manager.add_operation_history(history)
+
+            return True, f"导出成功，共 {len(reservations)} 条记录", filepath
+        except Exception as e:
+            return False, f"导出失败: {str(e)}", None
 
     def recalculate_locked_quantities(self) -> None:
         self.data_manager.recalculate_locked_quantities()

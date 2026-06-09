@@ -30,7 +30,10 @@ class DataExporter:
     def _default_serializer(obj: Any) -> Any:
         if isinstance(obj, (date, datetime)):
             return obj.isoformat()
-        if isinstance(obj, (InstrumentStatus, InstrumentCategory, BorrowStatus, OperationType, ReservationStatus)):
+        if isinstance(obj, (InstrumentStatus, InstrumentCategory, BorrowStatus, OperationType, ReservationStatus,
+                            InventoryCheckStatus, ConflictType, ConflictResolution,
+                            CalibrationScheduleStatus, CalibrationScheduleItemStatus,
+                            CalibrationConflictType, CalibrationConflictResolution)):
             return obj.value
         raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 

@@ -7,6 +7,8 @@ from ..models import (
     OperationHistory, OperationType,
     CalibrationRecord,
     User, UserRole,
+    InventoryItem,
+    Reservation, ReservationStatus,
 )
 from ..storage import DataManager
 
@@ -15,6 +17,7 @@ class InstrumentService:
     def __init__(self, data_manager: DataManager):
         self.data_manager = data_manager
         self.refresh_statuses()
+        self.recalculate_locked_quantities()
 
     def refresh_statuses(self) -> None:
         self.data_manager.refresh_instrument_statuses()
@@ -397,3 +400,217 @@ class InstrumentService:
 
     def update_settings(self, settings: dict) -> None:
         self.data_manager.update_settings(settings)
+
+    def get_inventory_items(self) -> List[InventoryItem]:
+        return self.data_manager.get_inventory_items()
+
+    def get_inventory_item_by_id(self, item_id: str) -> Optional[InventoryItem]:
+        return self.data_manager.get_inventory_item_by_id(item_id)
+
+    def create_inventory_item(self, name: str, category: str, model: str,
+                              total_quantity: int, unit: str = "台",
+                              location: str = "", manager: str = "",
+                              description: str = "") -> InventoryItem:
+        item = InventoryItem.create(
+            name=name,
+            category=category,
+            model=model,
+            total_quantity=total_quantity,
+            unit=unit,
+            location=location,
+            manager=manager,
+            description=description,
+        )
+        self.data_manager.add_inventory_item(item)
+        return item
+
+    def update_inventory_item(self, item: InventoryItem, **kwargs) -> InventoryItem:
+        for key, value in kwargs.items():
+            if hasattr(item, key) and getattr(item, key) != value:
+                setattr(item, key, value)
+        self.data_manager.update_inventory_item(item)
+        return item
+
+    def create_reservation(self, inventory_item_id: str, requester: str,
+                           department: str, quantity: int,
+                           expected_use_date: date, purpose: str = "",
+                           notes: str = "") -> Tuple[bool, str, Optional[Reservation]]:
+        item = self.get_inventory_item_by_id(inventory_item_id)
+        if not item:
+            return False, "库存项不存在", None
+        
+        if quantity <= 0:
+            return False, "预约数量必须大于0", None
+        
+        if quantity > item.total_quantity:
+            return False, f"预约数量不能超过总库存（{item.total_quantity}{item.unit}）", None
+        
+        reservation = Reservation.create(
+            inventory_item_id=inventory_item_id,
+            requester=requester,
+            department=department,
+            quantity=quantity,
+            expected_use_date=expected_use_date,
+            purpose=purpose,
+            notes=notes,
+        )
+        self.data_manager.add_reservation(reservation)
+        return True, "预约创建成功", reservation
+
+    def approve_reservation(self, reservation_id: str) -> Tuple[bool, str, Optional[Reservation]]:
+        user = self.get_current_user()
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+        
+        can_approve, reason = reservation.can_approve()
+        if not can_approve:
+            return False, reason, None
+        
+        item = self.get_inventory_item_by_id(reservation.inventory_item_id)
+        if not item:
+            return False, "关联的库存项不存在", None
+        
+        can_lock, lock_reason = item.can_lock(reservation.quantity)
+        if not can_lock:
+            return False, lock_reason, None
+        
+        item.lock(reservation.quantity)
+        self.data_manager.update_inventory_item(item)
+        
+        reservation.mark_approved(user.display_name)
+        self.data_manager.update_reservation(reservation)
+        
+        return True, "审批通过，库存已锁定", reservation
+
+    def reject_reservation(self, reservation_id: str, reason: str = "") -> Tuple[bool, str, Optional[Reservation]]:
+        user = self.get_current_user()
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+        
+        can_reject, reject_reason = reservation.can_reject()
+        if not can_reject:
+            return False, reject_reason, None
+        
+        reservation.mark_rejected(user.display_name, reason)
+        self.data_manager.update_reservation(reservation)
+        
+        return True, "预约已拒绝", reservation
+
+    def cancel_reservation(self, reservation_id: str, reason: str = "") -> Tuple[bool, str, Optional[Reservation]]:
+        user = self.get_current_user()
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+        
+        can_cancel, cancel_reason = reservation.can_cancel()
+        if not can_cancel:
+            return False, cancel_reason, None
+        
+        was_approved = reservation.status == ReservationStatus.APPROVED
+        
+        reservation.mark_cancelled(user.display_name, reason)
+        self.data_manager.update_reservation(reservation)
+        
+        if was_approved:
+            item = self.get_inventory_item_by_id(reservation.inventory_item_id)
+            if item:
+                item.unlock(reservation.quantity)
+                self.data_manager.update_inventory_item(item)
+        
+        return True, "预约已取消", reservation
+
+    def reschedule_reservation(self, reservation_id: str, new_use_date: date,
+                               new_quantity: Optional[int] = None
+                               ) -> Tuple[bool, str, Optional[Reservation]]:
+        user = self.get_current_user()
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+        
+        can_reschedule, reason = reservation.can_reschedule()
+        if not can_reschedule:
+            return False, reason, None
+        
+        quantity = new_quantity if new_quantity is not None else reservation.quantity
+        item = self.get_inventory_item_by_id(reservation.inventory_item_id)
+        if not item:
+            return False, "关联的库存项不存在", None
+        
+        if quantity <= 0:
+            return False, "预约数量必须大于0", None
+        
+        if quantity > item.total_quantity:
+            return False, f"预约数量不能超过总库存（{item.total_quantity}{item.unit}）", None
+        
+        was_approved = reservation.status == ReservationStatus.APPROVED
+        original_quantity = reservation.quantity
+        
+        if was_approved:
+            item.unlock(original_quantity)
+            self.data_manager.update_inventory_item(item)
+        
+        new_reservation = Reservation.create(
+            inventory_item_id=reservation.inventory_item_id,
+            requester=reservation.requester,
+            department=reservation.department,
+            quantity=quantity,
+            expected_use_date=new_use_date,
+            purpose=reservation.purpose,
+            notes=reservation.notes,
+            original_reservation_id=reservation.id,
+        )
+        
+        if was_approved:
+            can_lock, lock_reason = item.can_lock(quantity)
+            if not can_lock:
+                item.lock(original_quantity)
+                self.data_manager.update_inventory_item(item)
+                return False, lock_reason, None
+            
+            new_reservation.mark_approved(user.display_name)
+            item.lock(quantity)
+            self.data_manager.update_inventory_item(item)
+        
+        self.data_manager.add_reservation(new_reservation)
+        
+        reservation.mark_rescheduled(new_reservation.id)
+        self.data_manager.update_reservation(reservation)
+        
+        return True, "改期成功", new_reservation
+
+    def fulfill_reservation(self, reservation_id: str) -> Tuple[bool, str, Optional[Reservation]]:
+        user = self.get_current_user()
+        reservation = self.data_manager.get_reservation_by_id(reservation_id)
+        if not reservation:
+            return False, "预约不存在", None
+        
+        can_fulfill, reason = reservation.can_fulfill()
+        if not can_fulfill:
+            return False, reason, None
+        
+        item = self.get_inventory_item_by_id(reservation.inventory_item_id)
+        if not item:
+            return False, "关联的库存项不存在", None
+        
+        if reservation.quantity > item.total_quantity:
+            return False, "库存不足，无法完成领用", None
+        
+        item.total_quantity -= reservation.quantity
+        item.unlock(reservation.quantity)
+        self.data_manager.update_inventory_item(item)
+        
+        reservation.mark_fulfilled(user.display_name)
+        self.data_manager.update_reservation(reservation)
+        
+        return True, "领用完成，库存已扣减", reservation
+
+    def get_reservations(self, inventory_item_id: Optional[str] = None) -> List[Reservation]:
+        return self.data_manager.get_reservations(inventory_item_id)
+
+    def get_reservation_by_id(self, reservation_id: str) -> Optional[Reservation]:
+        return self.data_manager.get_reservation_by_id(reservation_id)
+
+    def recalculate_locked_quantities(self) -> None:
+        self.data_manager.recalculate_locked_quantities()

@@ -3,6 +3,8 @@ from .borrow_record import BorrowRecord, BorrowStatus
 from .operation_history import OperationHistory, OperationType
 from .user import User, UserRole
 from .calibration import CalibrationRecord
+from .inventory import InventoryItem
+from .reservation import Reservation, ReservationStatus
 
 __all__ = [
     'Instrument',
@@ -15,4 +17,7 @@ __all__ = [
     'User',
     'UserRole',
     'CalibrationRecord',
+    'InventoryItem',
+    'Reservation',
+    'ReservationStatus',
 ]

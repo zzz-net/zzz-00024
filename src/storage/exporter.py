@@ -9,6 +9,8 @@ from ..models import (
     BorrowRecord, BorrowStatus,
     OperationHistory, OperationType,
     CalibrationRecord,
+    InventoryItem,
+    Reservation, ReservationStatus,
 )
 
 
@@ -22,7 +24,7 @@ class DataExporter:
     def _default_serializer(obj: Any) -> Any:
         if isinstance(obj, (date, datetime)):
             return obj.isoformat()
-        if isinstance(obj, (InstrumentStatus, InstrumentCategory, BorrowStatus, OperationType)):
+        if isinstance(obj, (InstrumentStatus, InstrumentCategory, BorrowStatus, OperationType, ReservationStatus)):
             return obj.value
         raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
@@ -215,6 +217,98 @@ class DataExporter:
         
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2, default=DataExporter._default_serializer)
+        
+        return filepath
+
+    @staticmethod
+    def export_inventory_items_to_json(items: List[InventoryItem], filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+        
+        data = [item.to_dict() for item in items]
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=DataExporter._default_serializer)
+        
+        return filepath
+
+    @staticmethod
+    def export_inventory_items_to_csv(items: List[InventoryItem], filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+        
+        headers = [
+            'ID', '名称', '类别', '型号', '总库存', '锁定数量', '可用数量',
+            '单位', '位置', '负责人', '描述', '创建时间', '更新时间'
+        ]
+        
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            
+            for item in items:
+                writer.writerow([
+                    item.id,
+                    item.name,
+                    item.category,
+                    item.model,
+                    item.total_quantity,
+                    item.locked_quantity,
+                    item.available_quantity,
+                    item.unit,
+                    item.location,
+                    item.manager,
+                    item.description,
+                    item.created_at.isoformat(),
+                    item.updated_at.isoformat(),
+                ])
+        
+        return filepath
+
+    @staticmethod
+    def export_reservations_to_json(reservations: List[Reservation], filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+        
+        data = [r.to_dict() for r in reservations]
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=DataExporter._default_serializer)
+        
+        return filepath
+
+    @staticmethod
+    def export_reservations_to_csv(reservations: List[Reservation], filepath: str,
+                                    inventory_items: Optional[List[InventoryItem]] = None) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+        
+        item_map = {i.id: i.name for i in inventory_items} if inventory_items else {}
+        
+        headers = [
+            'ID', '库存项ID', '库存项名称', '申请人', '部门', '数量',
+            '预计使用日期', '用途', '状态', '审批人', '审批时间',
+            '原预约ID', '备注', '创建时间', '更新时间'
+        ]
+        
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            
+            for r in reservations:
+                writer.writerow([
+                    r.id,
+                    r.inventory_item_id,
+                    item_map.get(r.inventory_item_id, ''),
+                    r.requester,
+                    r.department,
+                    r.quantity,
+                    r.expected_use_date.isoformat(),
+                    r.purpose,
+                    r.status.value,
+                    r.approver or '',
+                    r.approved_at.isoformat() if r.approved_at else '',
+                    r.original_reservation_id or '',
+                    r.notes,
+                    r.created_at.isoformat(),
+                    r.updated_at.isoformat(),
+                ])
         
         return filepath
 

@@ -9,6 +9,8 @@ from ..models import (
     OperationHistory,
     CalibrationRecord,
     User, UserRole,
+    InventoryItem,
+    Reservation,
 )
 
 
@@ -46,6 +48,8 @@ class DataManager:
             'borrow_records': [],
             'operation_histories': [],
             'calibration_records': [],
+            'inventory_items': [],
+            'reservations': [],
             'current_user': User.create_normal_user('user', '普通用户').to_dict(),
             'settings': {
                 'export_dir': os.path.join(os.path.expanduser('~'), 'Documents', 'LabExports'),
@@ -84,6 +88,16 @@ class DataManager:
                 CalibrationRecord.from_dict(item) for item in data['calibration_records']
             ]
         
+        if 'inventory_items' in data:
+            result['inventory_items'] = [
+                InventoryItem.from_dict(item) for item in data['inventory_items']
+            ]
+        
+        if 'reservations' in data:
+            result['reservations'] = [
+                Reservation.from_dict(item) for item in data['reservations']
+            ]
+        
         if 'current_user' in data:
             result['current_user'] = data['current_user']
         
@@ -98,6 +112,8 @@ class DataManager:
             'borrow_records': [item.to_dict() for item in data['borrow_records']],
             'operation_histories': [item.to_dict() for item in data['operation_histories']],
             'calibration_records': [item.to_dict() for item in data['calibration_records']],
+            'inventory_items': [item.to_dict() for item in data['inventory_items']],
+            'reservations': [item.to_dict() for item in data['reservations']],
             'current_user': data['current_user'],
             'settings': data['settings'],
             'metadata': {
@@ -221,4 +237,66 @@ class DataManager:
                 instr.status = InstrumentStatus.CALIBRATION_DUE
             else:
                 instr.status = InstrumentStatus.AVAILABLE
+        self.save()
+
+    def get_inventory_items(self) -> List[InventoryItem]:
+        return self._data['inventory_items']
+
+    def get_inventory_item_by_id(self, item_id: str) -> Optional[InventoryItem]:
+        for item in self._data['inventory_items']:
+            if item.id == item_id:
+                return item
+        return None
+
+    def add_inventory_item(self, item: InventoryItem) -> None:
+        self._data['inventory_items'].append(item)
+        self.save()
+
+    def update_inventory_item(self, item: InventoryItem) -> None:
+        for i, existing in enumerate(self._data['inventory_items']):
+            if existing.id == item.id:
+                item.updated_at = datetime.now()
+                self._data['inventory_items'][i] = item
+                self.save()
+                return
+        raise ValueError(f"InventoryItem with id {item.id} not found")
+
+    def delete_inventory_item(self, item_id: str) -> None:
+        self._data['inventory_items'] = [
+            item for item in self._data['inventory_items'] if item.id != item_id
+        ]
+        self.save()
+
+    def get_reservations(self, inventory_item_id: Optional[str] = None) -> List[Reservation]:
+        reservations = self._data['reservations']
+        if inventory_item_id:
+            reservations = [r for r in reservations if r.inventory_item_id == inventory_item_id]
+        return sorted(reservations, key=lambda r: r.created_at, reverse=True)
+
+    def get_reservation_by_id(self, reservation_id: str) -> Optional[Reservation]:
+        for r in self._data['reservations']:
+            if r.id == reservation_id:
+                return r
+        return None
+
+    def add_reservation(self, reservation: Reservation) -> None:
+        self._data['reservations'].append(reservation)
+        self.save()
+
+    def update_reservation(self, reservation: Reservation) -> None:
+        for i, existing in enumerate(self._data['reservations']):
+            if existing.id == reservation.id:
+                reservation.updated_at = datetime.now()
+                self._data['reservations'][i] = reservation
+                self.save()
+                return
+        raise ValueError(f"Reservation with id {reservation.id} not found")
+
+    def recalculate_locked_quantities(self) -> None:
+        for item in self._data['inventory_items']:
+            locked = 0
+            for r in self._data['reservations']:
+                if r.inventory_item_id == item.id and r.requires_locking():
+                    locked += r.quantity
+            item.locked_quantity = locked
         self.save()

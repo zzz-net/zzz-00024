@@ -1,0 +1,122 @@
+{
+  "instruments": [],
+  "borrow_records": [],
+  "operation_histories": [
+    {
+      "id": "19281a02-048d-4c8f-9aff-e0cc6df18562",
+      "instrument_id": "",
+      "operation_type": "预约导出",
+      "operator": "?????",
+      "timestamp": "2026-06-09T18:16:24.930350",
+      "details": "导出预约 1 条，格式: JSON，范围: 全部，筛选条件: [状态:待审批, 部门:???, 起始日期:2026-06-09, 结束日期:2026-06-14]",
+      "related_record_id": ""
+    },
+    {
+      "id": "c7a69374-fd9c-4faa-8f0a-74b59c4ebc96",
+      "instrument_id": "",
+      "operation_type": "预约导出",
+      "operator": "????",
+      "timestamp": "2026-06-09T18:16:24.936187",
+      "details": "导出预约 2 条，格式: CSV，范围: 本人(????)，筛选条件: [状态:待审批, 部门:???]",
+      "related_record_id": ""
+    }
+  ],
+  "calibration_records": [],
+  "inventory_items": [
+    {
+      "id": "ccdfeaee-3d7e-45c3-a60d-4aba1f9274ac",
+      "name": "Reviewer Projector",
+      "category": "??",
+      "model": "RV-1",
+      "total_quantity": 5,
+      "locked_quantity": 2,
+      "unit": "?",
+      "location": "",
+      "manager": "",
+      "description": "",
+      "created_at": "2026-06-09T18:16:24.928400",
+      "updated_at": "2026-06-09T18:16:24.928400"
+    }
+  ],
+  "reservations": [
+    {
+      "id": "6fbd0bb9-7a21-447d-bb8f-4a85b1959687",
+      "inventory_item_id": "ccdfeaee-3d7e-45c3-a60d-4aba1f9274ac",
+      "requester": "????",
+      "department": "???",
+      "quantity": 1,
+      "expected_use_date": "2026-06-10",
+      "purpose": "review-case",
+      "notes": "",
+      "status": "待审批",
+      "approver": null,
+      "approved_at": null,
+      "original_reservation_id": null,
+      "created_at": "2026-06-09T18:16:24.928400",
+      "updated_at": "2026-06-09T18:16:24.928400"
+    },
+    {
+      "id": "34500b59-52d2-491a-8c98-b99703cf713c",
+      "inventory_item_id": "ccdfeaee-3d7e-45c3-a60d-4aba1f9274ac",
+      "requester": "????",
+      "department": "???",
+      "quantity": 2,
+      "expected_use_date": "2026-06-11",
+      "purpose": "review-case",
+      "notes": "",
+      "status": "已审批",
+      "approver": null,
+      "approved_at": null,
+      "original_reservation_id": null,
+      "created_at": "2026-06-09T18:16:24.928400",
+      "updated_at": "2026-06-09T18:16:24.928400"
+    },
+    {
+      "id": "80b236c3-8fd9-4a18-820c-179cbba760a7",
+      "inventory_item_id": "ccdfeaee-3d7e-45c3-a60d-4aba1f9274ac",
+      "requester": "????",
+      "department": "???",
+      "quantity": 1,
+      "expected_use_date": "2026-06-19",
+      "purpose": "review-case",
+      "notes": "",
+      "status": "待审批",
+      "approver": null,
+      "approved_at": null,
+      "original_reservation_id": null,
+      "created_at": "2026-06-09T18:16:24.929381",
+      "updated_at": "2026-06-09T18:16:24.929381"
+    }
+  ],
+  "inventory_checks": [],
+  "inventory_check_conflicts": [],
+  "calibration_schedules": [],
+  "calibration_schedule_items": [],
+  "calibration_schedule_conflicts": [],
+  "current_user": {
+    "username": "user_a",
+    "role": "普通用户",
+    "display_name": "????"
+  },
+  "settings": {
+    "export_dir": "D:\\workSpace\\AI__SPACE\\zzz-00024\\review_temp_dm\\reviewer_custom_jrc9e7u1\\exports",
+    "last_filters": {
+      "status": "",
+      "category": "",
+      "search": ""
+    },
+    "last_reservation_filters": {
+      "status": "待审批",
+      "department": "???",
+      "date_from": "2026-06-09",
+      "date_to": "2026-06-14"
+    },
+    "last_export_format": "json",
+    "last_reservation_export_dir": "D:\\workSpace\\AI__SPACE\\zzz-00024\\review_temp_dm\\reviewer_custom_jrc9e7u1\\exports"
+  },
+  "metadata": {
+    "created_at": "2026-06-09T18:16:24.932316",
+    "updated_at": "2026-06-09T18:16:24.936187",
+    "version": "1.0"
+  }
+}

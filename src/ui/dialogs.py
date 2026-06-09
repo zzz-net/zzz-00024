@@ -2119,15 +2119,16 @@ class ReservationApproveConflictDialog(BaseDialog):
 
 
 class ReservationExportDialog(BaseDialog):
-    def __init__(self, parent, export_dir: str, record_count: int):
+    def __init__(self, parent, export_dir: str, record_count: int, last_format: str = "csv"):
         self.export_dir = export_dir
         self.record_count = record_count
-        self.format_var = tk.StringVar(value="csv")
-        super().__init__(parent, "导出预约", "400x250")
+        self.format_var = tk.StringVar(value=last_format)
+        self.dir_label = None
+        super().__init__(parent, "导出预约", "450x280")
 
     def _create_content(self):
         info_label = ttk.Label(self.main_frame, text=f"将导出 {self.record_count} 条预约记录", font=('bold', 10))
-        info_label.pack(pady=(0, 20))
+        info_label.pack(pady=(0, 15))
 
         form_frame = ttk.Frame(self.main_frame)
         form_frame.pack(fill=tk.BOTH, expand=True)
@@ -2139,13 +2140,30 @@ class ReservationExportDialog(BaseDialog):
         ttk.Radiobutton(format_frame, text="JSON", variable=self.format_var, value="json").pack(side=tk.LEFT)
 
         ttk.Label(form_frame, text="导出目录:").grid(row=1, column=0, sticky=tk.W, pady=10)
-        ttk.Label(form_frame, text=self.export_dir, wraplength=250).grid(row=1, column=1, sticky=tk.W, pady=10, padx=(10, 0))
+        dir_frame = ttk.Frame(form_frame)
+        dir_frame.grid(row=1, column=1, sticky=tk.EW, pady=10, padx=(10, 0))
+        self.dir_label = ttk.Label(dir_frame, text=self.export_dir, wraplength=250)
+        self.dir_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(dir_frame, text="更改...", command=self._on_change_dir).pack(side=tk.RIGHT)
 
         form_frame.columnconfigure(1, weight=1)
+
+    def _on_change_dir(self):
+        from tkinter import filedialog
+        new_dir = filedialog.askdirectory(
+            title="选择导出目录",
+            initialdir=self.export_dir,
+            parent=self
+        )
+        if new_dir:
+            self.export_dir = new_dir
+            if self.dir_label:
+                self.dir_label.config(text=self.export_dir)
 
     def _on_ok(self):
         self.result = {
             'format': self.format_var.get(),
+            'export_dir': self.export_dir,
         }
         super()._on_ok()
 
@@ -2536,16 +2554,33 @@ class ReservationDialog(BaseDialog):
             messagebox.showinfo("提示", "没有可导出的记录", parent=self)
             return
 
-        settings = self.service.get_settings()
-        export_dir = settings.get('export_dir', '')
+        filters = self._get_filters()
+        if filters is None:
+            return
 
-        dialog = ReservationExportDialog(self, export_dir, len(self.current_reservations))
+        settings = self.service.get_settings()
+        last_format = settings.get('last_export_format', 'csv')
+        last_export_dir = settings.get('last_reservation_export_dir', settings.get('export_dir', ''))
+
+        dialog = ReservationExportDialog(self, last_export_dir, len(self.current_reservations), last_format)
         if dialog.show() and dialog.result:
             format_type = dialog.result['format']
-            success, msg, filepath = self.service.export_reservations(
-                self.current_reservations, format_type, export_dir
+            export_dir = dialog.result['export_dir']
+
+            success, msg, filepath = self.service.export_reservations_with_filters(
+                status_filter=filters.get('status_filter'),
+                department_filter=filters.get('department_filter'),
+                date_from=filters.get('date_from'),
+                date_to=filters.get('date_to'),
+                format_type=format_type,
+                export_dir=export_dir,
             )
             if success:
+                settings['last_export_format'] = format_type
+                settings['last_reservation_export_dir'] = export_dir
+                settings['export_dir'] = export_dir
+                self.service.update_settings(settings)
+
                 messagebox.showinfo("导出成功", f"{msg}\n\n文件已保存到:\n{filepath}", parent=self)
                 if hasattr(os, 'startfile'):
                     try:
@@ -2553,4 +2588,4 @@ class ReservationDialog(BaseDialog):
                     except Exception:
                         pass
             else:
-                messagebox.showerror("导出失败", msg, parent=self)
+                messagebox.showwarning("导出提示", msg, parent=self)

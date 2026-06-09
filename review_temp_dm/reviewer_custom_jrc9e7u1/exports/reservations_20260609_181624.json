@@ -1,0 +1,18 @@
+[
+  {
+    "id": "6fbd0bb9-7a21-447d-bb8f-4a85b1959687",
+    "inventory_item_id": "ccdfeaee-3d7e-45c3-a60d-4aba1f9274ac",
+    "requester": "????",
+    "department": "???",
+    "quantity": 1,
+    "expected_use_date": "2026-06-10",
+    "purpose": "review-case",
+    "notes": "",
+    "status": "待审批",
+    "approver": null,
+    "approved_at": null,
+    "original_reservation_id": null,
+    "created_at": "2026-06-09T18:16:24.928400",
+    "updated_at": "2026-06-09T18:16:24.928400"
+  }
+]

@@ -1,0 +1,102 @@
+{
+  "instruments": [],
+  "borrow_records": [],
+  "operation_histories": [],
+  "calibration_records": [],
+  "inventory_items": [
+    {
+      "id": "b425760b-6972-422d-bb2f-33359f67d428",
+      "name": "Item",
+      "category": "??",
+      "model": "RV-1",
+      "total_quantity": 5,
+      "locked_quantity": 0,
+      "unit": "?",
+      "location": "",
+      "manager": "",
+      "description": "",
+      "created_at": "2026-06-09T18:17:06.773706",
+      "updated_at": "2026-06-09T18:17:06.773706"
+    }
+  ],
+  "reservations": [
+    {
+      "id": "040abe37-d1f4-4ea9-a2ce-2fbdf6fab75f",
+      "inventory_item_id": "b425760b-6972-422d-bb2f-33359f67d428",
+      "requester": "Alice",
+      "department": "???",
+      "quantity": 1,
+      "expected_use_date": "2026-06-10",
+      "purpose": "review-case",
+      "notes": "",
+      "status": "待审批",
+      "approver": null,
+      "approved_at": null,
+      "original_reservation_id": null,
+      "created_at": "2026-06-09T18:17:06.774163",
+      "updated_at": "2026-06-09T18:17:06.774163"
+    },
+    {
+      "id": "1c9ecd43-caa7-4366-acbf-7a9e8990e9ba",
+      "inventory_item_id": "b425760b-6972-422d-bb2f-33359f67d428",
+      "requester": "Bob",
+      "department": "???",
+      "quantity": 2,
+      "expected_use_date": "2026-06-11",
+      "purpose": "review-case",
+      "notes": "",
+      "status": "已审批",
+      "approver": null,
+      "approved_at": null,
+      "original_reservation_id": null,
+      "created_at": "2026-06-09T18:17:06.774163",
+      "updated_at": "2026-06-09T18:17:06.774163"
+    },
+    {
+      "id": "70b7a23b-5cb9-4600-9983-5ff5514979f8",
+      "inventory_item_id": "b425760b-6972-422d-bb2f-33359f67d428",
+      "requester": "Alice",
+      "department": "???",
+      "quantity": 1,
+      "expected_use_date": "2026-06-19",
+      "purpose": "review-case",
+      "notes": "",
+      "status": "待审批",
+      "approver": null,
+      "approved_at": null,
+      "original_reservation_id": null,
+      "created_at": "2026-06-09T18:17:06.774163",
+      "updated_at": "2026-06-09T18:17:06.774163"
+    }
+  ],
+  "inventory_checks": [],
+  "inventory_check_conflicts": [],
+  "calibration_schedules": [],
+  "calibration_schedule_items": [],
+  "calibration_schedule_conflicts": [],
+  "current_user": {
+    "username": "user_a",
+    "role": "普通用户",
+    "display_name": "Alice"
+  },
+  "settings": {
+    "export_dir": "C:\\Users\\admin\\Documents\\LabExports",
+    "last_filters": {
+      "status": "",
+      "category": "",
+      "search": ""
+    },
+    "last_reservation_filters": {
+      "status": "",
+      "department": "",
+      "date_from": "",
+      "date_to": ""
+    },
+    "last_export_format": "csv"
+  },
+  "metadata": {
+    "created_at": "2026-06-09T18:17:06.767485",
+    "updated_at": "2026-06-09T18:17:06.776042",
+    "version": "1.0"
+  }
+}

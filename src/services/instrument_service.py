@@ -768,8 +768,17 @@ class InstrumentService:
     def export_reservations(self,
                             reservations: List[Reservation],
                             format_type: str,
-                            export_dir: str) -> Tuple[bool, str, Optional[str]]:
+                            export_dir: str,
+                            filters: Optional[Dict[str, Any]] = None) -> Tuple[bool, str, Optional[str]]:
         user = self.get_current_user()
+
+        if not reservations:
+            return False, "没有符合条件的预约记录，未生成导出文件", None
+
+        if not user.can_export_all_reservations():
+            reservations = [r for r in reservations if r.requester == user.display_name]
+            if not reservations:
+                return False, "您没有可导出的预约记录，未生成导出文件", None
 
         try:
             filename = DataExporter.generate_export_filename("reservations", format_type, export_dir)
@@ -782,7 +791,22 @@ class InstrumentService:
             else:
                 return False, f"不支持的导出格式: {format_type}", None
 
-            details = f"导出预约 {len(reservations)} 条，格式: {format_type.upper()}"
+            filter_desc = ""
+            if filters:
+                filter_parts = []
+                if filters.get('status_filter'):
+                    filter_parts.append(f"状态:{filters['status_filter']}")
+                if filters.get('department_filter'):
+                    filter_parts.append(f"部门:{filters['department_filter']}")
+                if filters.get('date_from'):
+                    filter_parts.append(f"起始日期:{filters['date_from'].isoformat()}")
+                if filters.get('date_to'):
+                    filter_parts.append(f"结束日期:{filters['date_to'].isoformat()}")
+                if filter_parts:
+                    filter_desc = f"，筛选条件: [{', '.join(filter_parts)}]"
+
+            scope = "全部" if user.can_export_all_reservations() else f"本人({user.display_name})"
+            details = f"导出预约 {len(reservations)} 条，格式: {format_type.upper()}，范围: {scope}{filter_desc}"
             history = OperationHistory.create(
                 instrument_id="",
                 operation_type=OperationType.RESERVATION_EXPORT,
@@ -795,6 +819,33 @@ class InstrumentService:
             return True, f"导出成功，共 {len(reservations)} 条记录", filepath
         except Exception as e:
             return False, f"导出失败: {str(e)}", None
+
+    def export_reservations_with_filters(self,
+                                         status_filter: Optional[str] = None,
+                                         department_filter: Optional[str] = None,
+                                         date_from: Optional[date] = None,
+                                         date_to: Optional[date] = None,
+                                         format_type: str = "csv",
+                                         export_dir: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+        if export_dir is None:
+            settings = self.get_settings()
+            export_dir = settings.get('export_dir', '')
+
+        filters = {
+            'status_filter': status_filter,
+            'department_filter': department_filter,
+            'date_from': date_from,
+            'date_to': date_to,
+        }
+
+        reservations = self.get_reservations_filtered(
+            status_filter=status_filter,
+            department_filter=department_filter,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        return self.export_reservations(reservations, format_type, export_dir, filters)
 
     def recalculate_locked_quantities(self) -> None:
         self.data_manager.recalculate_locked_quantities()

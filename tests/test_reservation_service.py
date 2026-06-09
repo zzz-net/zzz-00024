@@ -402,6 +402,204 @@ def test_empty_filter_defaults():
         print("  [OK] 通过：默认筛选条件结构完整")
 
 
+def test_export_empty_result_no_file():
+    """测试空结果不生成导出文件"""
+    print("\n【测试11】空结果不生成文件")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager = DataManager(data_dir=tmpdir)
+        service = InstrumentService(data_manager)
+
+        admin = User.create_admin_user("admin", "管理员")
+        service.set_current_user(admin)
+
+        success, msg, filepath = service.export_reservations([], 'csv', tmpdir)
+        assert not success, "空结果应该导出失败"
+        assert "没有符合条件" in msg
+        assert filepath is None, "空结果不应返回文件路径"
+
+        files_before = os.listdir(tmpdir)
+        service.export_reservations([], 'csv', tmpdir)
+        files_after = os.listdir(tmpdir)
+        assert files_before == files_after, "空结果不应生成文件"
+        print("  [OK] 通过：空结果不生成导出文件，提示正确")
+
+
+def test_export_permission_filter_enforced():
+    """测试服务层强制权限过滤，即使传入包含他人预约的列表"""
+    print("\n【测试12】服务层强制权限过滤")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager = DataManager(data_dir=tmpdir)
+        service = InstrumentService(data_manager)
+
+        admin = User.create_admin_user("admin", "管理员")
+        service.set_current_user(admin)
+
+        item = service.create_inventory_item(
+            name="投影仪", category="办公", model="X1",
+            total_quantity=10, unit="台"
+        )
+
+        today = date.today()
+        r1, _ = _create_test_reservation(service, item.id, "张三", "研发部", 2, today + timedelta(days=1))
+        r2, _ = _create_test_reservation(service, item.id, "李四", "市场部", 1, today + timedelta(days=2))
+        r3, _ = _create_test_reservation(service, item.id, "张三", "研发部", 3, today + timedelta(days=3))
+
+        all_reservations = [r1, r2, r3]
+
+        normal_user = User.create_normal_user("zhangsan", "张三")
+        service.set_current_user(normal_user)
+
+        success, msg, filepath = service.export_reservations(all_reservations, 'csv', tmpdir)
+        assert success, f"导出失败: {msg}"
+
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            content = f.read()
+            assert "张三" in content
+            assert "李四" not in content, "普通用户导出时应过滤掉他人预约"
+
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            lines = f.readlines()
+            data_lines = [l for l in lines if l.strip() and not l.startswith('ID')]
+            assert len(data_lines) == 2, f"应导出2条张三的预约，实际{len(data_lines)}条"
+        print("  [OK] 通过：服务层强制权限过滤，普通用户只能导出自己的预约")
+
+
+def test_export_log_includes_filters():
+    """测试导出日志包含筛选条件信息"""
+    print("\n【测试13】导出日志包含筛选条件")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager = DataManager(data_dir=tmpdir)
+        service = InstrumentService(data_manager)
+
+        admin = User.create_admin_user("admin", "管理员")
+        service.set_current_user(admin)
+
+        item = service.create_inventory_item(
+            name="投影仪", category="办公", model="X1",
+            total_quantity=10, unit="台"
+        )
+
+        today = date.today()
+        r1, _ = _create_test_reservation(service, item.id, "张三", "研发部", 2, today + timedelta(days=1), ReservationStatus.PENDING)
+
+        filters = {
+            'status_filter': ReservationStatus.PENDING.value,
+            'department_filter': '研发部',
+            'date_from': today,
+            'date_to': today + timedelta(days=7),
+        }
+
+        reservations = service.get_reservations_filtered(**filters)
+        success, msg, filepath = service.export_reservations(reservations, 'csv', tmpdir, filters)
+        assert success
+
+        history = service.get_operation_histories()[0]
+        assert history.operation_type == OperationType.RESERVATION_EXPORT
+        assert ReservationStatus.PENDING.value in history.details
+        assert "研发部" in history.details
+        assert today.isoformat() in history.details
+        assert (today + timedelta(days=7)).isoformat() in history.details
+        assert "范围: 全部" in history.details
+        print("  [OK] 通过：导出日志包含筛选条件和范围信息")
+
+
+def test_export_format_setting_persistence():
+    """测试导出格式设置跨重启持久化"""
+    print("\n【测试14】导出格式设置跨重启持久化")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager = DataManager(data_dir=tmpdir)
+        service = InstrumentService(data_manager)
+
+        settings = service.get_settings()
+        assert settings.get('last_export_format') == 'csv', "默认导出格式应为csv"
+        print("  [OK] 通过：默认导出格式为csv")
+
+        settings['last_export_format'] = 'json'
+        settings['last_reservation_export_dir'] = '/custom/path'
+        service.update_settings(settings)
+
+        new_data_manager = DataManager(data_dir=tmpdir)
+        new_service = InstrumentService(new_data_manager)
+        new_settings = new_service.get_settings()
+
+        assert new_settings.get('last_export_format') == 'json'
+        assert new_settings.get('last_reservation_export_dir') == '/custom/path'
+        print("  [OK] 通过：导出格式和目录跨重启持久化")
+
+
+def test_export_with_filters_method():
+    """测试 export_reservations_with_filters 方法"""
+    print("\n【测试15】export_reservations_with_filters 方法")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager = DataManager(data_dir=tmpdir)
+        service = InstrumentService(data_manager)
+
+        admin = User.create_admin_user("admin", "管理员")
+        service.set_current_user(admin)
+
+        item = service.create_inventory_item(
+            name="投影仪", category="办公", model="X1",
+            total_quantity=10, unit="台"
+        )
+
+        today = date.today()
+        r1, _ = _create_test_reservation(service, item.id, "张三", "研发部", 2, today + timedelta(days=1), ReservationStatus.PENDING)
+        r2, _ = _create_test_reservation(service, item.id, "李四", "市场部", 1, today + timedelta(days=2), ReservationStatus.APPROVED)
+
+        success, msg, filepath = service.export_reservations_with_filters(
+            status_filter=ReservationStatus.PENDING.value,
+            department_filter='研发部',
+            format_type='csv',
+            export_dir=tmpdir,
+        )
+        assert success, f"导出失败: {msg}"
+
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            content = f.read()
+            assert "张三" in content
+            assert "李四" not in content
+            assert "研发部" in content
+
+        history = service.get_operation_histories()[0]
+        assert ReservationStatus.PENDING.value in history.details
+        assert "研发部" in history.details
+        print("  [OK] 通过：export_reservations_with_filters 正确应用筛选条件")
+
+
+def test_normal_user_export_others_empty():
+    """测试普通用户尝试导出仅包含他人预约的列表时返回空结果提示"""
+    print("\n【测试16】普通用户导出他人预约返回空结果")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager = DataManager(data_dir=tmpdir)
+        service = InstrumentService(data_manager)
+
+        admin = User.create_admin_user("admin", "管理员")
+        service.set_current_user(admin)
+
+        item = service.create_inventory_item(
+            name="投影仪", category="办公", model="X1",
+            total_quantity=10, unit="台"
+        )
+
+        today = date.today()
+        r1, _ = _create_test_reservation(service, item.id, "李四", "市场部", 1, today + timedelta(days=1))
+
+        normal_user = User.create_normal_user("zhangsan", "张三")
+        service.set_current_user(normal_user)
+
+        success, msg, filepath = service.export_reservations([r1], 'csv', tmpdir)
+        assert not success
+        assert "您没有可导出的预约记录" in msg
+        assert filepath is None
+        print("  [OK] 通过：普通用户导出他人预约时返回空结果提示")
+
+
 def _create_test_reservation(service, item_id, requester, department, quantity, expected_date, status=None):
     """创建测试预约的辅助方法"""
     success, msg, reservation = service.create_reservation(
@@ -432,6 +630,12 @@ def run_all_tests():
         test_operation_history_logging,
         test_normal_user_export_own_only,
         test_empty_filter_defaults,
+        test_export_empty_result_no_file,
+        test_export_permission_filter_enforced,
+        test_export_log_includes_filters,
+        test_export_format_setting_persistence,
+        test_export_with_filters_method,
+        test_normal_user_export_others_empty,
     ]
 
     for test in tests:

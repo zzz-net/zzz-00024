@@ -18,7 +18,7 @@ except tk.TclError:
 from src.models import User, UserRole, ReservationStatus, OperationType
 from src.storage import DataManager
 from src.services import InstrumentService
-from src.ui.dialogs import ReservationDialog
+from src.ui.dialogs import ReservationDialog, ReservationExportDialog
 
 
 def require_tk(test_func):
@@ -587,6 +587,271 @@ def test_constructor_accepts_all_params():
             root.destroy()
 
 
+@require_tk
+def test_export_dialog_default_format_from_settings():
+    """测试导出对话框从 settings 读取默认导出格式"""
+    print("\n【GUI测试14】导出对话框默认格式从 settings 读取")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager, service, admin, _ = setup_test_environment(tmpdir)
+
+        root = tk.Tk()
+        root.withdraw()
+
+        try:
+            settings = service.get_settings()
+            settings['last_export_format'] = 'json'
+            service.update_settings(settings)
+
+            dialog = ReservationExportDialog(root, tmpdir, 5, settings.get('last_export_format', 'csv'))
+            assert dialog.format_var.get() == 'json'
+            print("  [OK] 通过：导出对话框默认格式为 json（从 settings 读取）")
+            dialog.destroy()
+
+            settings['last_export_format'] = 'csv'
+            service.update_settings(settings)
+
+            dialog2 = ReservationExportDialog(root, tmpdir, 5, settings.get('last_export_format', 'csv'))
+            assert dialog2.format_var.get() == 'csv'
+            print("  [OK] 通过：导出对话框默认格式为 csv（从 settings 读取）")
+            dialog2.destroy()
+
+        finally:
+            root.destroy()
+
+
+@require_tk
+def test_export_dialog_returns_export_dir():
+    """测试导出对话框返回 export_dir"""
+    print("\n【GUI测试15】导出对话框返回 export_dir")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager, service, admin, _ = setup_test_environment(tmpdir)
+
+        root = tk.Tk()
+        root.withdraw()
+
+        try:
+            dialog = ReservationExportDialog(root, tmpdir, 5, 'csv')
+            assert dialog.export_dir == tmpdir
+            dialog.format_var.set('json')
+            dialog.result = {'format': dialog.format_var.get(), 'export_dir': dialog.export_dir}
+
+            assert dialog.result['format'] == 'json'
+            assert dialog.result['export_dir'] == tmpdir
+            print("  [OK] 通过：导出对话框返回 format 和 export_dir")
+
+            dialog.destroy()
+
+        finally:
+            root.destroy()
+
+
+@require_tk
+def test_export_settings_persistence_after_export():
+    """测试导出后保存导出格式和目录到 settings"""
+    print("\n【GUI测试16】导出后保存设置到 settings")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager, service, admin, _ = setup_test_environment(tmpdir)
+
+        root = tk.Tk()
+        root.withdraw()
+
+        try:
+            dialog = ReservationDialog(root, service, user=admin, is_admin=True)
+
+            settings_before = service.get_settings()
+            assert settings_before.get('last_export_format') == 'csv'
+
+            new_export_dir = os.path.join(tmpdir, 'custom_exports')
+            os.makedirs(new_export_dir, exist_ok=True)
+
+            dialog.status_filter_var.set(ReservationStatus.PENDING.value)
+            dialog._refresh_reservations()
+
+            filters = dialog._get_filters()
+            success, msg, filepath = service.export_reservations_with_filters(
+                status_filter=filters.get('status_filter'),
+                department_filter=filters.get('department_filter'),
+                date_from=filters.get('date_from'),
+                date_to=filters.get('date_to'),
+                format_type='json',
+                export_dir=new_export_dir,
+            )
+            assert success, f"导出失败: {msg}"
+
+            settings = service.get_settings()
+            settings['last_export_format'] = 'json'
+            settings['last_reservation_export_dir'] = new_export_dir
+            settings['export_dir'] = new_export_dir
+            service.update_settings(settings)
+
+            settings_after = service.get_settings()
+            assert settings_after.get('last_export_format') == 'json'
+            assert settings_after.get('last_reservation_export_dir') == new_export_dir
+            assert settings_after.get('export_dir') == new_export_dir
+            print("  [OK] 通过：导出后保存格式和目录到 settings")
+
+            dialog.destroy()
+
+        finally:
+            root.destroy()
+
+
+@require_tk
+def test_cross_restart_export_settings_recovery():
+    """测试跨重启导出设置恢复"""
+    print("\n【GUI测试17】跨重启导出设置恢复")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager, service, admin, _ = setup_test_environment(tmpdir)
+
+        custom_dir = os.path.join(tmpdir, 'my_exports')
+        settings = service.get_settings()
+        settings['last_export_format'] = 'json'
+        settings['last_reservation_export_dir'] = custom_dir
+        service.update_settings(settings)
+
+        del data_manager
+        del service
+
+        new_data_manager = DataManager(data_dir=tmpdir)
+        new_service = InstrumentService(new_data_manager)
+        new_service.set_current_user(admin)
+
+        loaded_settings = new_service.get_settings()
+        assert loaded_settings.get('last_export_format') == 'json'
+        assert loaded_settings.get('last_reservation_export_dir') == custom_dir
+        print("  [OK] 通过：重启后导出设置正确恢复")
+
+        root = tk.Tk()
+        root.withdraw()
+
+        try:
+            dialog = ReservationDialog(root, new_service, user=admin, is_admin=True)
+            saved_settings = new_service.get_settings()
+
+            assert saved_settings.get('last_export_format') == 'json'
+            assert saved_settings.get('last_reservation_export_dir') == custom_dir
+            print("  [OK] 通过：GUI 初始化后导出设置保持正确")
+
+            dialog.destroy()
+
+        finally:
+            root.destroy()
+
+
+@require_tk
+def test_export_with_filters_integration_gui():
+    """测试 GUI 导出沿用当前筛选条件"""
+    print("\n【GUI测试18】GUI导出沿用当前筛选条件")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager, service, admin, _ = setup_test_environment(tmpdir)
+
+        root = tk.Tk()
+        root.withdraw()
+
+        try:
+            dialog = ReservationDialog(root, service, user=admin, is_admin=True)
+
+            dialog.status_filter_var.set(ReservationStatus.PENDING.value)
+            dialog.department_filter_var.set('研发部')
+            dialog._refresh_reservations()
+
+            filters = dialog._get_filters()
+            assert filters.get('status_filter') == ReservationStatus.PENDING.value
+            assert filters.get('department_filter') == '研发部'
+            print("  [OK] 通过：获取当前筛选条件正确")
+
+            success, msg, csv_path = service.export_reservations_with_filters(
+                status_filter=filters.get('status_filter'),
+                department_filter=filters.get('department_filter'),
+                date_from=filters.get('date_from'),
+                date_to=filters.get('date_to'),
+                format_type='csv',
+                export_dir=tmpdir,
+            )
+            assert success, f"CSV导出失败: {msg}"
+            assert os.path.exists(csv_path)
+
+            with open(csv_path, 'r', encoding='utf-8-sig') as f:
+                content = f.read()
+                assert '待审批' in content
+                assert '研发部' in content
+                assert '张三' in content
+            print("  [OK] 通过：CSV导出沿用筛选条件正确")
+
+            success, msg, json_path = service.export_reservations_with_filters(
+                status_filter=filters.get('status_filter'),
+                department_filter=filters.get('department_filter'),
+                date_from=filters.get('date_from'),
+                date_to=filters.get('date_to'),
+                format_type='json',
+                export_dir=tmpdir,
+            )
+            assert success, f"JSON导出失败: {msg}"
+            assert os.path.exists(json_path)
+
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                assert all(r['status'] == '待审批' for r in data)
+                assert all(r['department'] == '研发部' for r in data)
+            print("  [OK] 通过：JSON导出沿用筛选条件正确")
+
+            history = service.get_operation_histories()[:2]
+            assert all(h.operation_type == OperationType.RESERVATION_EXPORT for h in history)
+            assert all('待审批' in h.details for h in history)
+            assert all('研发部' in h.details for h in history)
+            print("  [OK] 通过：导出日志包含筛选条件")
+
+            dialog.destroy()
+
+        finally:
+            root.destroy()
+
+
+@require_tk
+def test_empty_export_shows_warning():
+    """测试空结果导出显示警告提示"""
+    print("\n【GUI测试19】空结果导出显示警告")
+    print("-" * 70)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        data_manager = DataManager(data_dir=tmpdir)
+        service = InstrumentService(data_manager)
+
+        admin = User.create_admin_user("admin", "管理员")
+        service.set_current_user(admin)
+
+        export_dir = os.path.join(tmpdir, 'exports')
+        os.makedirs(export_dir, exist_ok=True)
+
+        root = tk.Tk()
+        root.withdraw()
+
+        try:
+            dialog = ReservationDialog(root, service, user=admin, is_admin=True)
+
+            success, msg, filepath = service.export_reservations_with_filters(
+                format_type='csv',
+                export_dir=export_dir,
+            )
+            assert not success
+            assert "没有符合条件" in msg or "没有可导出" in msg
+            assert filepath is None
+            print(f"  [OK] 通过：空结果返回正确提示 - {msg}")
+
+            files = [f for f in os.listdir(export_dir) if f.endswith('.csv') or f.endswith('.json')]
+            assert len(files) == 0, "空结果不应生成导出文件"
+            print("  [OK] 通过：空结果未生成导出文件")
+
+            dialog.destroy()
+
+        finally:
+            root.destroy()
+
+
 def run_all_gui_tests():
     print("=" * 70)
     print("预约管理 - GUI回归测试套件")
@@ -613,6 +878,12 @@ def run_all_gui_tests():
         test_status_tag_colors,
         test_count_label_update,
         test_constructor_accepts_all_params,
+        test_export_dialog_default_format_from_settings,
+        test_export_dialog_returns_export_dir,
+        test_export_settings_persistence_after_export,
+        test_cross_restart_export_settings_recovery,
+        test_export_with_filters_integration_gui,
+        test_empty_export_shows_warning,
     ]
 
     for test in tests:

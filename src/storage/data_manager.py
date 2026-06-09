@@ -74,6 +74,7 @@ class DataManager:
                     'date_from': '',
                     'date_to': '',
                 },
+                'last_export_format': 'csv',
             },
             'metadata': {
                 'created_at': datetime.now().isoformat(),

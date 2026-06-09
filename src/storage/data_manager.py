@@ -16,6 +16,7 @@ from ..models import (
     CalibrationSchedule, CalibrationScheduleStatus,
     CalibrationScheduleItem, CalibrationScheduleItemStatus,
     CalibrationScheduleConflict, CalibrationConflictType, CalibrationConflictResolution,
+    MaintenanceOrder, MaintenanceOrderStatus,
 )
 
 
@@ -60,6 +61,7 @@ class DataManager:
             'calibration_schedules': [],
             'calibration_schedule_items': [],
             'calibration_schedule_conflicts': [],
+            'maintenance_orders': [],
             'current_user': User.create_normal_user('user', '普通用户').to_dict(),
             'settings': {
                 'export_dir': os.path.join(os.path.expanduser('~'), 'Documents', 'LabExports'),
@@ -140,6 +142,11 @@ class DataManager:
                 CalibrationScheduleConflict.from_dict(item) for item in data['calibration_schedule_conflicts']
             ]
         
+        if 'maintenance_orders' in data:
+            result['maintenance_orders'] = [
+                MaintenanceOrder.from_dict(item) for item in data['maintenance_orders']
+            ]
+        
         if 'current_user' in data:
             result['current_user'] = data['current_user']
         
@@ -161,6 +168,7 @@ class DataManager:
             'calibration_schedules': [item.to_dict() for item in data['calibration_schedules']],
             'calibration_schedule_items': [item.to_dict() for item in data['calibration_schedule_items']],
             'calibration_schedule_conflicts': [item.to_dict() for item in data['calibration_schedule_conflicts']],
+            'maintenance_orders': [item.to_dict() for item in data['maintenance_orders']],
             'current_user': data['current_user'],
             'settings': data['settings'],
             'metadata': {
@@ -499,3 +507,37 @@ class DataManager:
         undoable = [item for item in items if item.undo_snapshot is not None]
         undoable.sort(key=lambda x: x.processed_at or datetime.min, reverse=True)
         return (True, undoable[0]) if undoable else (False, None)
+
+    def get_maintenance_orders(self, instrument_id: Optional[str] = None) -> List[MaintenanceOrder]:
+        orders = self._data['maintenance_orders']
+        if instrument_id:
+            orders = [o for o in orders if o.instrument_id == instrument_id]
+        return sorted(orders, key=lambda o: o.created_at, reverse=True)
+
+    def get_maintenance_order_by_id(self, order_id: str) -> Optional[MaintenanceOrder]:
+        for order in self._data['maintenance_orders']:
+            if order.id == order_id:
+                return order
+        return None
+
+    def get_active_maintenance_order(self, instrument_id: str) -> Optional[MaintenanceOrder]:
+        for order in self._data['maintenance_orders']:
+            if order.instrument_id == instrument_id and order.is_active():
+                return order
+        return None
+
+    def add_maintenance_order(self, order: MaintenanceOrder) -> None:
+        self._data['maintenance_orders'].append(order)
+        self.save()
+
+    def update_maintenance_order(self, order: MaintenanceOrder) -> None:
+        for i, existing in enumerate(self._data['maintenance_orders']):
+            if existing.id == order.id:
+                order.updated_at = datetime.now()
+                self._data['maintenance_orders'][i] = order
+                self.save()
+                return
+        raise ValueError(f"MaintenanceOrder with id {order.id} not found")
+
+    def has_active_maintenance(self, instrument_id: str) -> bool:
+        return self.get_active_maintenance_order(instrument_id) is not None

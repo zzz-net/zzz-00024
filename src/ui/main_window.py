@@ -27,6 +27,9 @@ from .dialogs import (
     CalibrationScheduleHistoryDialog,
     CalibrationScheduleDetailDialog,
     ReservationDialog,
+    MaintenanceOrderDialog,
+    MaintenanceOrderListDialog,
+    MaintenanceOrderDetailDialog,
 )
 
 
@@ -92,6 +95,12 @@ class MainWindow(ttk.Frame):
         ttk.Separator(left_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
         
         ttk.Button(left_frame, text="预约管理", command=self._on_reservation_management).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(left_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        self.maintenance_btn = ttk.Button(left_frame, text="发起维修", command=self._on_create_maintenance, state=tk.DISABLED)
+        self.maintenance_btn.pack(side=tk.LEFT, padx=5)
+        ttk.Button(left_frame, text="维修管理", command=self._on_maintenance_management).pack(side=tk.LEFT, padx=5)
         
         ttk.Separator(left_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
         
@@ -293,18 +302,23 @@ class MainWindow(ttk.Frame):
         self.undo_calibration_btn.config(state=tk.NORMAL if can_undo_cal and user.can_calibrate() else tk.DISABLED)
         
         if has_selection and instr:
+            has_active_maint = self.service.has_active_maintenance(instr.id)
             can_borrow, _ = instr.can_borrow()
-            self.borrow_btn.config(state=tk.NORMAL if can_borrow else tk.DISABLED)
+            self.borrow_btn.config(state=tk.NORMAL if can_borrow and not has_active_maint else tk.DISABLED)
             
             active_record = self.service.get_active_borrow_record(instr.id)
             self.return_btn.config(state=tk.NORMAL if active_record else tk.DISABLED)
             
-            self.calibrate_btn.config(state=tk.NORMAL if user.can_calibrate() else tk.DISABLED)
+            self.calibrate_btn.config(state=tk.NORMAL if user.can_calibrate() and not has_active_maint else tk.DISABLED)
             self.freeze_btn.config(state=tk.NORMAL if user.can_freeze() and 
-                                   instr.status not in [InstrumentStatus.FROZEN, InstrumentStatus.BORROWED] 
-                                   else tk.DISABLED)
+                                   instr.status not in [InstrumentStatus.FROZEN, InstrumentStatus.BORROWED]
+                                   and not has_active_maint else tk.DISABLED)
             self.unfreeze_btn.config(state=tk.NORMAL if user.can_unfreeze_maintenance() and 
                                      instr.status == InstrumentStatus.FROZEN else tk.DISABLED)
+            
+            can_create_maint = (instr.status not in [InstrumentStatus.BORROWED] 
+                               and not has_active_maint)
+            self.maintenance_btn.config(state=tk.NORMAL if can_create_maint else tk.DISABLED)
         else:
             self.borrow_btn.config(state=tk.DISABLED)
             self.return_btn.config(state=tk.DISABLED)
@@ -690,3 +704,32 @@ class MainWindow(ttk.Frame):
         is_admin = user.can_manage_reservations()
         dialog = ReservationDialog(self.parent, self.service, user=user, is_admin=is_admin)
         dialog.show()
+
+    def _on_create_maintenance(self):
+        if not self.selected_instrument:
+            return
+        
+        dialog = MaintenanceOrderDialog(self.parent, self.selected_instrument)
+        if dialog.show() and dialog.result:
+            data = dialog.result
+            success, message, order = self.service.create_maintenance_order(
+                instrument_id=self.selected_instrument.id,
+                fault_description=data['fault_description'],
+                priority=data['priority'],
+                expected_completion_date=data.get('expected_completion_date'),
+                assignee=data.get('assignee'),
+            )
+            if success:
+                self.refresh_instruments()
+                self._update_button_states()
+                messagebox.showinfo("成功", message, parent=self.parent)
+            else:
+                messagebox.showerror("创建失败", message, parent=self.parent)
+
+    def _on_maintenance_management(self):
+        user = self.service.get_current_user()
+        is_admin = user.role.value in ["维修人员", "管理员"]
+        dialog = MaintenanceOrderListDialog(self.parent, self.service, user=user, is_admin=is_admin)
+        if dialog.show():
+            self.refresh_instruments()
+            self._update_button_states()

@@ -18,6 +18,8 @@ from ..models import (
     CalibrationScheduleItem, CalibrationScheduleItemStatus,
     CalibrationScheduleConflict, CalibrationConflictType,
     CalibrationConflictResolution,
+    MaintenanceOrder, MaintenanceOrderStatus,
+    MaintenancePriority, MaintenanceCompletionOption,
 )
 from ..storage import DataManager, DataExporter
 
@@ -138,6 +140,9 @@ class InstrumentService:
         if not instrument:
             return False, "仪器不存在", None
         
+        if self.data_manager.has_active_maintenance(instrument_id):
+            return False, "仪器正在维修中，无法借出", None
+        
         can_borrow, reason = instrument.can_borrow()
         if not can_borrow:
             return False, reason, None
@@ -229,6 +234,9 @@ class InstrumentService:
         instrument = self.get_instrument_by_id(instrument_id)
         if not instrument:
             return False, "仪器不存在", None
+        
+        if self.data_manager.has_active_maintenance(instrument_id):
+            return False, "仪器正在维修中，无法完成校准", None
         
         if next_calibration_date <= calibration_date:
             return False, "下次校准日期必须晚于本次校准日期", None
@@ -1420,6 +1428,21 @@ class InstrumentService:
                 conflicts.append(conflict)
                 continue
 
+            if self.data_manager.has_active_maintenance(instr.id):
+                conflict = CalibrationScheduleConflict.create(
+                    schedule_id=schedule_id,
+                    conflict_type=CalibrationConflictType.FROZEN_CONFLICT,
+                    serial_number=serial,
+                    expected_value="在库可用",
+                    actual_value="维修中",
+                    instrument_id=instr.id,
+                    instrument_name=instr.name,
+                    notes="仪器当前处于维修状态，无法安排校准",
+                    row_data=item
+                )
+                conflicts.append(conflict)
+                continue
+
             cert_number = item.get('certificate_number', '').strip()
             if cert_number:
                 if cert_number in existing_certificates or cert_number in schedule_certificates or cert_number in seen_certificates:
@@ -1784,3 +1807,216 @@ class InstrumentService:
 
     def get_calibration_schedule_item_by_id(self, item_id: str) -> Optional[CalibrationScheduleItem]:
         return self.data_manager.get_calibration_schedule_item_by_id(item_id)
+
+    def create_maintenance_order(self, instrument_id: str, fault_description: str,
+                                 priority: MaintenancePriority,
+                                 expected_completion_date: Optional[date] = None,
+                                 assignee: Optional[str] = None
+                                 ) -> Tuple[bool, str, Optional[MaintenanceOrder]]:
+        user = self.get_current_user()
+        instrument = self.get_instrument_by_id(instrument_id)
+        
+        if not instrument:
+            return False, "仪器不存在", None
+        
+        if self.data_manager.has_active_maintenance(instrument_id):
+            return False, "该仪器已有未完成的维修工单", None
+        
+        if instrument.status == InstrumentStatus.BORROWED:
+            return False, "借出中的仪器不能发起维修", None
+        
+        order = MaintenanceOrder.create(
+            instrument_id=instrument_id,
+            instrument_name=instrument.name,
+            serial_number=instrument.serial_number,
+            requester=user.display_name,
+            fault_description=fault_description,
+            priority=priority,
+            expected_completion_date=expected_completion_date,
+            assignee=assignee,
+        )
+        
+        self.data_manager.add_maintenance_order(order)
+        
+        instrument.status = InstrumentStatus.MAINTENANCE
+        self.data_manager.update_instrument(instrument)
+        
+        history = OperationHistory.create(
+            instrument_id=instrument_id,
+            operation_type=OperationType.MAINTENANCE_ORDER_CREATE,
+            operator=user.display_name,
+            details=f"创建维修工单, 故障: {fault_description}, 优先级: {priority.value}",
+            related_record_id=order.id,
+        )
+        self.data_manager.add_operation_history(history)
+        
+        return True, "维修工单创建成功", order
+
+    def accept_maintenance_order(self, order_id: str) -> Tuple[bool, str, Optional[MaintenanceOrder]]:
+        user = self.get_current_user()
+        order = self.data_manager.get_maintenance_order_by_id(order_id)
+        
+        if not order:
+            return False, "维修工单不存在", None
+        
+        if not order.can_accept(user.role.value):
+            return False, "您没有权限接单或工单状态不正确", None
+        
+        order.accept(user.display_name)
+        self.data_manager.update_maintenance_order(order)
+        
+        history = OperationHistory.create(
+            instrument_id=order.instrument_id,
+            operation_type=OperationType.MAINTENANCE_ORDER_ACCEPT,
+            operator=user.display_name,
+            details=f"接单维修: {order.instrument_name}",
+            related_record_id=order.id,
+        )
+        self.data_manager.add_operation_history(history)
+        
+        return True, "接单成功", order
+
+    def add_maintenance_processing_note(self, order_id: str, note: str
+                                         ) -> Tuple[bool, str, Optional[MaintenanceOrder]]:
+        user = self.get_current_user()
+        order = self.data_manager.get_maintenance_order_by_id(order_id)
+        
+        if not order:
+            return False, "维修工单不存在", None
+        
+        if not order.can_process(user.display_name, user.role.value):
+            return False, "您没有权限处理该工单或工单状态不正确", None
+        
+        order.add_processing_note(user.display_name, note)
+        self.data_manager.update_maintenance_order(order)
+        
+        history = OperationHistory.create(
+            instrument_id=order.instrument_id,
+            operation_type=OperationType.MAINTENANCE_ORDER_PROCESS,
+            operator=user.display_name,
+            details=f"补充处理记录: {note}",
+            related_record_id=order.id,
+        )
+        self.data_manager.add_operation_history(history)
+        
+        return True, "处理记录已添加", order
+
+    def complete_maintenance_order(self, order_id: str,
+                                    completion_option: MaintenanceCompletionOption,
+                                    notes: str = ""
+                                    ) -> Tuple[bool, str, Optional[MaintenanceOrder]]:
+        user = self.get_current_user()
+        order = self.data_manager.get_maintenance_order_by_id(order_id)
+        
+        if not order:
+            return False, "维修工单不存在", None
+        
+        if not order.can_complete(user.display_name, user.role.value):
+            return False, "您没有权限完成该工单或工单状态不正确", None
+        
+        order.complete(user.display_name, completion_option, notes)
+        self.data_manager.update_maintenance_order(order)
+        
+        instrument = self.get_instrument_by_id(order.instrument_id)
+        if instrument and instrument.status == InstrumentStatus.MAINTENANCE:
+            if completion_option == MaintenanceCompletionOption.KEEP_FROZEN:
+                instrument.status = InstrumentStatus.FROZEN
+            elif completion_option == MaintenanceCompletionOption.NEEDS_CALIBRATION:
+                if instrument.is_calibration_expired():
+                    instrument.status = InstrumentStatus.CALIBRATION_EXPIRED
+                elif instrument.is_calibration_due_soon(30):
+                    instrument.status = InstrumentStatus.CALIBRATION_DUE
+                else:
+                    instrument.status = InstrumentStatus.CALIBRATION_DUE
+            else:
+                if instrument.is_calibration_expired():
+                    instrument.status = InstrumentStatus.CALIBRATION_EXPIRED
+                elif instrument.is_calibration_due_soon(30):
+                    instrument.status = InstrumentStatus.CALIBRATION_DUE
+                else:
+                    instrument.status = InstrumentStatus.AVAILABLE
+            
+            self.data_manager.update_instrument(instrument)
+        
+        details = f"完成维修, 方式: {completion_option.value}"
+        if notes:
+            details += f", 备注: {notes}"
+        
+        history = OperationHistory.create(
+            instrument_id=order.instrument_id,
+            operation_type=OperationType.MAINTENANCE_ORDER_COMPLETE,
+            operator=user.display_name,
+            details=details,
+            related_record_id=order.id,
+        )
+        self.data_manager.add_operation_history(history)
+        
+        return True, "维修工单已完成", order
+
+    def reject_maintenance_order(self, order_id: str, reason: str
+                                  ) -> Tuple[bool, str, Optional[MaintenanceOrder]]:
+        user = self.get_current_user()
+        order = self.data_manager.get_maintenance_order_by_id(order_id)
+        
+        if not order:
+            return False, "维修工单不存在", None
+        
+        if not order.can_reject(user.display_name, user.role.value):
+            return False, "您没有权限驳回该工单或工单状态不正确", None
+        
+        order.reject(user.display_name, reason)
+        self.data_manager.update_maintenance_order(order)
+        
+        instrument = self.get_instrument_by_id(order.instrument_id)
+        if instrument and instrument.status == InstrumentStatus.MAINTENANCE:
+            if instrument.is_calibration_expired():
+                instrument.status = InstrumentStatus.CALIBRATION_EXPIRED
+            elif instrument.is_calibration_due_soon(30):
+                instrument.status = InstrumentStatus.CALIBRATION_DUE
+            else:
+                instrument.status = InstrumentStatus.AVAILABLE
+            self.data_manager.update_instrument(instrument)
+        
+        history = OperationHistory.create(
+            instrument_id=order.instrument_id,
+            operation_type=OperationType.MAINTENANCE_ORDER_REJECT,
+            operator=user.display_name,
+            details=f"驳回工单, 原因: {reason}",
+            related_record_id=order.id,
+        )
+        self.data_manager.add_operation_history(history)
+        
+        return True, "维修工单已驳回", order
+
+    def get_maintenance_orders(self, instrument_id: Optional[str] = None,
+                                status_filter: Optional[str] = None,
+                                priority_filter: Optional[str] = None
+                                ) -> List[MaintenanceOrder]:
+        user = self.get_current_user()
+        orders = self.data_manager.get_maintenance_orders(instrument_id)
+        
+        if user.role == UserRole.NORMAL:
+            orders = [o for o in orders if o.requester == user.display_name]
+        
+        if status_filter:
+            orders = [o for o in orders if o.status.value == status_filter]
+        
+        if priority_filter:
+            orders = [o for o in orders if o.priority.value == priority_filter]
+        
+        return orders
+
+    def get_maintenance_order_by_id(self, order_id: str) -> Optional[MaintenanceOrder]:
+        user = self.get_current_user()
+        order = self.data_manager.get_maintenance_order_by_id(order_id)
+        
+        if order and not order.can_view(user.display_name, user.role.value):
+            return None
+        
+        return order
+
+    def get_active_maintenance_order(self, instrument_id: str) -> Optional[MaintenanceOrder]:
+        return self.data_manager.get_active_maintenance_order(instrument_id)
+
+    def has_active_maintenance(self, instrument_id: str) -> bool:
+        return self.data_manager.has_active_maintenance(instrument_id)

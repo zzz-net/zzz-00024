@@ -15,6 +15,8 @@ from ..models import (
     CalibrationConflictResolution,
     Reservation, ReservationStatus,
     InventoryItem,
+    MaintenanceOrder, MaintenanceOrderStatus,
+    MaintenancePriority, MaintenanceCompletionOption,
 )
 from ..services import InstrumentService
 from ..storage import DataExporter
@@ -2589,3 +2591,565 @@ class ReservationDialog(BaseDialog):
                         pass
             else:
                 messagebox.showwarning("导出提示", msg, parent=self)
+
+
+class MaintenanceOrderDialog(BaseDialog):
+    def __init__(self, parent, instrument: Instrument, user: User):
+        self.instrument = instrument
+        self.user = user
+        self.fault_description_var = tk.StringVar()
+        self.priority_var = tk.StringVar(value=MaintenancePriority.MEDIUM.value)
+        self.expected_date_var = tk.StringVar(
+            value=(date.today() + timedelta(days=7)).isoformat()
+        )
+        self.assignee_var = tk.StringVar()
+        super().__init__(parent, f"发起维修 - {instrument.name}", "550x500")
+
+    def _create_content(self):
+        info_frame = ttk.LabelFrame(self.main_frame, text="仪器信息", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 15))
+
+        grid = ttk.Frame(info_frame)
+        grid.pack(fill=tk.X)
+        ttk.Label(grid, text="仪器名称:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(grid, text=self.instrument.name, font=('bold', 10)).grid(row=0, column=1, sticky=tk.W)
+        ttk.Label(grid, text="型号:").grid(row=0, column=2, sticky=tk.W, padx=(20, 0))
+        ttk.Label(grid, text=self.instrument.model).grid(row=0, column=3, sticky=tk.W)
+        ttk.Label(grid, text="序列号:").grid(row=1, column=0, sticky=tk.W, pady=3)
+        ttk.Label(grid, text=self.instrument.serial_number).grid(row=1, column=1, sticky=tk.W, pady=3)
+        ttk.Label(grid, text="当前状态:").grid(row=1, column=2, sticky=tk.W, padx=(20, 0), pady=3)
+        ttk.Label(grid, text=self.instrument.status.value, foreground="blue").grid(row=1, column=3, sticky=tk.W, pady=3)
+
+        form_frame = ttk.LabelFrame(self.main_frame, text="维修信息", padding="10")
+        form_frame.pack(fill=tk.BOTH, expand=True)
+
+        form_grid = ttk.Frame(form_frame)
+        form_grid.pack(fill=tk.BOTH, expand=True)
+
+        row = 0
+        ttk.Label(form_grid, text="故障描述:").grid(row=row, column=0, sticky=tk.NW, pady=5)
+        fault_text = tk.Text(form_grid, height=5, width=45)
+        fault_text.grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+        self.fault_text = fault_text
+        row += 1
+
+        ttk.Label(form_grid, text="优先级:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        priority_combo = ttk.Combobox(
+            form_grid, textvariable=self.priority_var,
+            values=[p.value for p in MaintenancePriority],
+            state="readonly", width=42
+        )
+        priority_combo.grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+        row += 1
+
+        ttk.Label(form_grid, text="预计完成日期:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        date_frame = ttk.Frame(form_grid)
+        date_frame.grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+        ttk.Entry(date_frame, textvariable=self.expected_date_var, width=20).pack(side=tk.LEFT)
+        ttk.Label(date_frame, text="(格式: YYYY-MM-DD)").pack(side=tk.LEFT, padx=(10, 0))
+        row += 1
+
+        ttk.Label(form_grid, text="负责人:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(form_grid, textvariable=self.assignee_var, width=45).grid(
+            row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0)
+        )
+        row += 1
+
+        ttk.Label(form_grid, text="申请人:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        ttk.Label(form_grid, text=self.user.display_name, foreground="gray").grid(
+            row=row, column=1, sticky=tk.W, pady=5, padx=(10, 0)
+        )
+
+        form_grid.columnconfigure(1, weight=1)
+
+    def _on_ok(self):
+        fault_description = self.fault_text.get("1.0", tk.END).strip()
+        if not fault_description:
+            messagebox.showerror("错误", "请输入故障描述", parent=self)
+            return
+
+        expected_date = None
+        if self.expected_date_var.get().strip():
+            try:
+                expected_date = date.fromisoformat(self.expected_date_var.get().strip())
+            except ValueError:
+                messagebox.showerror("错误", "预计完成日期格式不正确", parent=self)
+                return
+
+        assignee = self.assignee_var.get().strip() or None
+
+        self.result = {
+            'instrument_id': self.instrument.id,
+            'instrument_name': self.instrument.name,
+            'serial_number': self.instrument.serial_number,
+            'requester': self.user.display_name,
+            'fault_description': fault_description,
+            'priority': MaintenancePriority(self.priority_var.get()),
+            'expected_completion_date': expected_date,
+            'assignee': assignee,
+        }
+        super()._on_ok()
+
+
+class MaintenanceOrderListDialog(BaseDialog):
+    def __init__(self, parent, service: InstrumentService, user: User):
+        self.service = service
+        self.user = user
+        self.is_maintenance = user.role in [UserRole.MAINTENANCE, UserRole.ADMIN]
+        self.status_filter_var = tk.StringVar(value="")
+        self.selected_order: Optional[MaintenanceOrder] = None
+        super().__init__(parent, "维修工单管理", "1100x600")
+
+    def _create_content(self):
+        filter_frame = ttk.Frame(self.main_frame)
+        filter_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(filter_frame, text="状态筛选:").pack(side=tk.LEFT)
+        status_values = [""] + [s.value for s in MaintenanceOrderStatus]
+        status_combo = ttk.Combobox(
+            filter_frame, textvariable=self.status_filter_var,
+            values=status_values, state="readonly", width=15
+        )
+        status_combo.pack(side=tk.LEFT, padx=5)
+        status_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_orders())
+
+        ttk.Button(filter_frame, text="查询", command=self._refresh_orders).pack(side=tk.LEFT, padx=5)
+        ttk.Button(filter_frame, text="重置", command=self._on_reset_filter).pack(side=tk.LEFT)
+
+        self.count_label = ttk.Label(filter_frame, text="", style="Status.TLabel")
+        self.count_label.pack(side=tk.RIGHT)
+
+        list_frame = ttk.Frame(self.main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        columns = ("id", "instrument_name", "serial_number", "requester",
+                   "priority", "status", "assignee", "expected_date",
+                   "created_at", "updated_at")
+        self.tree = ttk.Treeview(list_frame, columns=columns, show="headings")
+
+        headings = [
+            ("id", "工单号", 80),
+            ("instrument_name", "仪器名称", 180),
+            ("serial_number", "序列号", 120),
+            ("requester", "申请人", 100),
+            ("priority", "优先级", 80),
+            ("status", "状态", 100),
+            ("assignee", "负责人", 100),
+            ("expected_date", "预计完成", 100),
+            ("created_at", "创建时间", 150),
+            ("updated_at", "更新时间", 150),
+        ]
+        for col, text, width in headings:
+            self.tree.heading(col, text=text)
+            self.tree.column(col, width=width, anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.tree.bind("<<TreeviewSelect>>", self._on_select_order)
+        self.tree.bind("<Double-1>", lambda e: self._on_view_detail())
+
+        btn_frame = ttk.Frame(self.main_frame)
+        btn_frame.pack(fill=tk.X)
+
+        self.view_btn = ttk.Button(btn_frame, text="查看详情", command=self._on_view_detail, state=tk.DISABLED)
+        self.view_btn.pack(side=tk.LEFT, padx=5)
+
+        if self.is_maintenance:
+            self.accept_btn = ttk.Button(btn_frame, text="接单", command=self._on_accept, state=tk.DISABLED)
+            self.accept_btn.pack(side=tk.LEFT, padx=5)
+
+            self.reject_btn = ttk.Button(btn_frame, text="驳回", command=self._on_reject, state=tk.DISABLED)
+            self.reject_btn.pack(side=tk.LEFT, padx=5)
+
+        self.refresh_btn = ttk.Button(btn_frame, text="刷新", command=self._refresh_orders)
+        self.refresh_btn.pack(side=tk.RIGHT, padx=5)
+
+        self._refresh_orders()
+
+    def _refresh_orders(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        status_filter = self.status_filter_var.get() or None
+        orders = self.service.get_maintenance_orders(status_filter=status_filter)
+
+        if not self.is_maintenance:
+            orders = [o for o in orders if o.requester == self.user.display_name]
+
+        for order in orders:
+            expected_date = order.expected_completion_date.isoformat() if order.expected_completion_date else "-"
+            self.tree.insert("", tk.END, iid=order.id, values=(
+                order.id[:8] + "...",
+                order.instrument_name,
+                order.serial_number,
+                order.requester,
+                order.priority.value,
+                order.status.value,
+                order.assignee or "-",
+                expected_date,
+                order.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                order.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
+            ), tags=(order.status.value, order.priority.value))
+
+        self.tree.tag_configure("待分配", foreground="darkorange")
+        self.tree.tag_configure("处理中", foreground="blue")
+        self.tree.tag_configure("已完成", foreground="green")
+        self.tree.tag_configure("已驳回", foreground="red")
+        self.tree.tag_configure("紧急", background="#ffe6e6")
+        self.tree.tag_configure("高", background="#fff0e6")
+
+        permission_note = "" if self.is_maintenance else "（仅显示您的工单）"
+        self.count_label.config(text=f"共 {len(orders)} 条记录{permission_note}")
+
+        self._update_button_states()
+
+    def _on_reset_filter(self):
+        self.status_filter_var.set("")
+        self._refresh_orders()
+
+    def _on_select_order(self, event):
+        selection = self.tree.selection()
+        if selection:
+            order_id = selection[0]
+            self.selected_order = self.service.get_maintenance_order_by_id(order_id)
+        else:
+            self.selected_order = None
+        self._update_button_states()
+
+    def _update_button_states(self):
+        has_selection = self.selected_order is not None
+        self.view_btn.config(state=tk.NORMAL if has_selection else tk.DISABLED)
+
+        if self.is_maintenance and has_selection:
+            order = self.selected_order
+            can_accept = order.can_accept(self.user.role.value)
+            self.accept_btn.config(state=tk.NORMAL if can_accept else tk.DISABLED)
+
+            can_reject = order.can_reject(self.user.display_name, self.user.role.value)
+            self.reject_btn.config(state=tk.NORMAL if can_reject else tk.DISABLED)
+        elif self.is_maintenance:
+            self.accept_btn.config(state=tk.DISABLED)
+            self.reject_btn.config(state=tk.DISABLED)
+
+    def _on_view_detail(self):
+        if not self.selected_order:
+            return
+
+        dialog = MaintenanceOrderDetailDialog(self, self.service, self.user, self.selected_order)
+        if dialog.show():
+            self._refresh_orders()
+            self.selected_order = self.service.get_maintenance_order_by_id(self.selected_order.id)
+            self._update_button_states()
+
+    def _on_accept(self):
+        if not self.selected_order or not self.is_maintenance:
+            return
+
+        if not self.selected_order.can_accept(self.user.role.value):
+            messagebox.showerror("错误", "该工单无法接单", parent=self)
+            return
+
+        if not messagebox.askyesno("确认接单", f"确定要接单维修吗？\n\n仪器: {self.selected_order.instrument_name}\n故障: {self.selected_order.fault_description[:50]}...", parent=self):
+            return
+
+        success, msg, _ = self.service.accept_maintenance_order(
+            order_id=self.selected_order.id,
+        )
+        if success:
+            self._refresh_orders()
+            self.selected_order = self.service.get_maintenance_order_by_id(self.selected_order.id)
+            self._update_button_states()
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("接单失败", msg, parent=self)
+
+    def _on_reject(self):
+        if not self.selected_order or not self.is_maintenance:
+            return
+
+        if not self.selected_order.can_reject(self.user.display_name, self.user.role.value):
+            messagebox.showerror("错误", "该工单无法驳回", parent=self)
+            return
+
+        reason = simpledialog.askstring("驳回原因", "请输入驳回原因:", parent=self)
+        if reason is None:
+            return
+
+        reason = reason.strip()
+        if not reason:
+            messagebox.showerror("错误", "请输入驳回原因", parent=self)
+            return
+
+        if not messagebox.askyesno("确认驳回", f"确定要驳回该工单吗？\n\n仪器: {self.selected_order.instrument_name}", parent=self):
+            return
+
+        success, msg, _ = self.service.reject_maintenance_order(
+            order_id=self.selected_order.id,
+            reason=reason,
+        )
+        if success:
+            self._refresh_orders()
+            self.selected_order = self.service.get_maintenance_order_by_id(self.selected_order.id)
+            self._update_button_states()
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("驳回失败", msg, parent=self)
+
+
+class MaintenanceOrderDetailDialog(BaseDialog):
+    def __init__(self, parent, service: InstrumentService, user: User, order: MaintenanceOrder):
+        self.service = service
+        self.user = user
+        self.order = order
+        self.is_maintenance = user.role in [UserRole.MAINTENANCE, UserRole.ADMIN]
+        self.processing_note_var = tk.StringVar()
+        self.completion_option_var = tk.StringVar(value=MaintenanceCompletionOption.RESTORE_AVAILABLE.value)
+        self.completion_notes_var = tk.StringVar()
+        super().__init__(parent, f"工单详情 - {order.instrument_name}", "850x700")
+
+    def _create_content(self):
+        notebook = ttk.Notebook(self.main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        info_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(info_frame, text="基本信息")
+
+        logs_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(logs_frame, text="处理日志")
+
+        self._create_info_page(info_frame)
+        self._create_logs_page(logs_frame)
+
+        if self.is_maintenance and self.order.status in [MaintenanceOrderStatus.PENDING, MaintenanceOrderStatus.IN_PROGRESS]:
+            action_frame = ttk.LabelFrame(self.main_frame, text="操作", padding="10")
+            action_frame.pack(fill=tk.X, pady=(10, 0))
+            self._create_action_buttons(action_frame)
+
+    def _create_info_page(self, parent):
+        basic_frame = ttk.LabelFrame(parent, text="工单基本信息", padding="10")
+        basic_frame.pack(fill=tk.X, pady=(0, 10))
+
+        grid = ttk.Frame(basic_frame)
+        grid.pack(fill=tk.X)
+
+        info = [
+            ("工单号", self.order.id),
+            ("仪器名称", self.order.instrument_name),
+            ("序列号", self.order.serial_number),
+            ("申请人", self.order.requester),
+            ("优先级", self.order.priority.value),
+            ("状态", self.order.status.value),
+            ("负责人", self.order.assignee or "-"),
+            ("预计完成", self.order.expected_completion_date.isoformat() if self.order.expected_completion_date else "-"),
+            ("创建时间", self.order.created_at.strftime("%Y-%m-%d %H:%M:%S")),
+            ("接单时间", self.order.accepted_at.strftime("%Y-%m-%d %H:%M:%S") if self.order.accepted_at else "-"),
+            ("完成时间", self.order.completed_at.strftime("%Y-%m-%d %H:%M:%S") if self.order.completed_at else "-"),
+            ("更新时间", self.order.updated_at.strftime("%Y-%m-%d %H:%M:%S")),
+        ]
+        for i, (label, value) in enumerate(info):
+            ttk.Label(grid, text=f"{label}:").grid(row=i // 3, column=(i % 3) * 2, sticky=tk.W, padx=(0, 5), pady=3)
+            fg = "blue" if label == "状态" else "black"
+            if label == "优先级" and value in ["紧急", "高"]:
+                fg = "red"
+            ttk.Label(grid, text=value, foreground=fg, font=('bold', 10) if label in ["状态", "优先级"] else None).grid(
+                row=i // 3, column=(i % 3) * 2 + 1, sticky=tk.W, pady=3
+            )
+
+        fault_frame = ttk.LabelFrame(parent, text="故障描述", padding="10")
+        fault_frame.pack(fill=tk.X, pady=(0, 10))
+        fault_text = tk.Text(fault_frame, height=4, wrap=tk.WORD)
+        fault_text.pack(fill=tk.X)
+        fault_text.insert("1.0", self.order.fault_description)
+        fault_text.config(state=tk.DISABLED)
+
+        if self.order.rejection_reason:
+            reject_frame = ttk.LabelFrame(parent, text="驳回原因", padding="10")
+            reject_frame.pack(fill=tk.X, pady=(0, 10))
+            reject_text = tk.Text(reject_frame, height=3, wrap=tk.WORD, foreground="red")
+            reject_text.pack(fill=tk.X)
+            reject_text.insert("1.0", self.order.rejection_reason)
+            reject_text.config(state=tk.DISABLED)
+
+        if self.order.completion_option:
+            completion_frame = ttk.LabelFrame(parent, text="完成信息", padding="10")
+            completion_frame.pack(fill=tk.X)
+            ttk.Label(completion_frame, text=f"完成方式: {self.order.completion_option.value}",
+                      foreground="green", font=('bold', 10)).pack(anchor=tk.W)
+
+    def _create_logs_page(self, parent):
+        columns = ("timestamp", "operator", "action", "details")
+        tree = ttk.Treeview(parent, columns=columns, show="headings")
+
+        headings = [
+            ("timestamp", "时间", 150),
+            ("operator", "操作人", 100),
+            ("action", "操作", 120),
+            ("details", "详情", 400),
+        ]
+        for col, text, width in headings:
+            tree.heading(col, text=text)
+            tree.column(col, width=width, anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for log in self.order.logs:
+            tree.insert("", tk.END, values=(
+                log.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                log.operator,
+                log.action,
+                log.details,
+            ))
+
+    def _create_action_buttons(self, parent):
+        can_process = self.order.can_process(self.user.display_name, self.user.role.value)
+        can_complete = self.order.can_complete(self.user.display_name, self.user.role.value)
+
+        if can_process:
+            note_frame = ttk.Frame(parent)
+            note_frame.pack(fill=tk.X, pady=(0, 10))
+            ttk.Label(note_frame, text="补充处理记录:").pack(side=tk.LEFT)
+            ttk.Entry(note_frame, textvariable=self.processing_note_var, width=60).pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+            ttk.Button(note_frame, text="添加记录", command=self._on_add_note).pack(side=tk.RIGHT)
+
+        if can_complete:
+            completion_frame = ttk.Frame(parent)
+            completion_frame.pack(fill=tk.X, pady=(0, 5))
+            ttk.Label(completion_frame, text="完成方式:").pack(side=tk.LEFT)
+            option_combo = ttk.Combobox(
+                completion_frame, textvariable=self.completion_option_var,
+                values=[o.value for o in MaintenanceCompletionOption],
+                state="readonly", width=20
+            )
+            option_combo.pack(side=tk.LEFT, padx=10)
+            ttk.Label(completion_frame, text="备注:").pack(side=tk.LEFT, padx=(20, 0))
+            ttk.Entry(completion_frame, textvariable=self.completion_notes_var, width=30).pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+            ttk.Button(completion_frame, text="完成维修", command=self._on_complete, style="Accent.TButton").pack(side=tk.RIGHT)
+
+        if self.order.status == MaintenanceOrderStatus.PENDING and self.is_maintenance:
+            ttk.Button(parent, text="接单", command=self._on_accept).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(parent, text="驳回", command=self._on_reject).pack(side=tk.LEFT, padx=5)
+
+    def _on_add_note(self):
+        note = self.processing_note_var.get().strip()
+        if not note:
+            messagebox.showerror("错误", "请输入处理记录内容", parent=self)
+            return
+
+        success, msg, _ = self.service.add_maintenance_processing_note(
+            order_id=self.order.id,
+            note=note,
+        )
+        if success:
+            self.processing_note_var.set("")
+            self._refresh_order()
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("添加失败", msg, parent=self)
+
+    def _on_complete(self):
+        if not self.order.can_complete(self.user.display_name, self.user.role.value):
+            messagebox.showerror("错误", "该工单无法完成", parent=self)
+            return
+
+        completion_option = MaintenanceCompletionOption(self.completion_option_var.get())
+        notes = self.completion_notes_var.get().strip()
+
+        instrument = self.service.get_instrument_by_id(self.order.instrument_id)
+        if instrument and instrument.status.value == "借出中":
+            if not messagebox.askyesno(
+                "确认完成",
+                f"仪器当前处于借出状态，完成维修后将设置为: {completion_option.value}\n\n"
+                f"是否确认完成？\n\n"
+                f"仪器: {self.order.instrument_name}\n"
+                f"完成方式: {completion_option.value}",
+                parent=self
+            ):
+                return
+        else:
+            if not messagebox.askyesno(
+                "确认完成",
+                f"确定要完成维修吗？\n\n"
+                f"仪器: {self.order.instrument_name}\n"
+                f"完成方式: {completion_option.value}",
+                parent=self
+            ):
+                return
+
+        success, msg, _ = self.service.complete_maintenance_order(
+            order_id=self.order.id,
+            completion_option=completion_option,
+            notes=notes,
+        )
+        if success:
+            self.completion_notes_var.set("")
+            self._refresh_order()
+            self.result = True
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("完成失败", msg, parent=self)
+
+    def _on_accept(self):
+        if not self.order.can_accept(self.user.role.value):
+            messagebox.showerror("错误", "该工单无法接单", parent=self)
+            return
+
+        if not messagebox.askyesno("确认接单", f"确定要接单维修吗？\n\n仪器: {self.order.instrument_name}", parent=self):
+            return
+
+        success, msg, _ = self.service.accept_maintenance_order(
+            order_id=self.order.id,
+        )
+        if success:
+            self._refresh_order()
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("接单失败", msg, parent=self)
+
+    def _on_reject(self):
+        if not self.order.can_reject(self.user.display_name, self.user.role.value):
+            messagebox.showerror("错误", "该工单无法驳回", parent=self)
+            return
+
+        reason = simpledialog.askstring("驳回原因", "请输入驳回原因:", parent=self)
+        if reason is None:
+            return
+
+        reason = reason.strip()
+        if not reason:
+            messagebox.showerror("错误", "请输入驳回原因", parent=self)
+            return
+
+        if not messagebox.askyesno("确认驳回", f"确定要驳回该工单吗？", parent=self):
+            return
+
+        success, msg, _ = self.service.reject_maintenance_order(
+            order_id=self.order.id,
+            reason=reason,
+        )
+        if success:
+            self._refresh_order()
+            self.result = True
+            messagebox.showinfo("成功", msg, parent=self)
+        else:
+            messagebox.showerror("驳回失败", msg, parent=self)
+
+    def _refresh_order(self):
+        self.order = self.service.get_maintenance_order_by_id(self.order.id)
+        for widget in self.main_frame.winfo_children():
+            widget.destroy()
+        self._create_content()
+        self._create_buttons()
+
+    def _create_buttons(self):
+        btn_frame = ttk.Frame(self.main_frame)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(btn_frame, text="关闭", command=self._on_cancel).pack(side=tk.RIGHT)

@@ -15,6 +15,11 @@ from .calibration_schedule import (
     CalibrationScheduleConflict, CalibrationConflictType,
     CalibrationConflictResolution,
 )
+from .maintenance_order import (
+    MaintenanceOrder, MaintenanceOrderStatus,
+    MaintenancePriority, MaintenanceCompletionOption,
+    MaintenanceLogEntry,
+)
 
 __all__ = [
     'Instrument',
@@ -42,4 +47,9 @@ __all__ = [
     'CalibrationScheduleConflict',
     'CalibrationConflictType',
     'CalibrationConflictResolution',
+    'MaintenanceOrder',
+    'MaintenanceOrderStatus',
+    'MaintenancePriority',
+    'MaintenanceCompletionOption',
+    'MaintenanceLogEntry',
 ]

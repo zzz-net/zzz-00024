@@ -9,8 +9,13 @@ from ..models import (
     User, UserRole,
     InventoryCheck, InventoryCheckStatus,
     InventoryCheckConflict, ConflictType, ConflictResolution,
+    CalibrationSchedule, CalibrationScheduleStatus,
+    CalibrationScheduleItem, CalibrationScheduleItemStatus,
+    CalibrationScheduleConflict, CalibrationConflictType,
+    CalibrationConflictResolution,
 )
 from ..services import InstrumentService
+from ..storage import DataExporter
 
 
 class BaseDialog(tk.Toplevel):
@@ -552,7 +557,7 @@ class ExportDialog(BaseDialog):
         self.export_dir = export_dir
         self.export_type_var = tk.StringVar(value="instruments")
         self.format_var = tk.StringVar(value="csv")
-        super().__init__(parent, "导出数据", "450x300")
+        super().__init__(parent, "导出数据", "450x420")
 
     def _create_content(self):
         form_frame = ttk.Frame(self.main_frame)
@@ -567,6 +572,10 @@ class ExportDialog(BaseDialog):
         ttk.Radiobutton(type_frame, text="校准记录", variable=self.export_type_var, value="calibrations").pack(anchor=tk.W)
         ttk.Radiobutton(type_frame, text="操作历史", variable=self.export_type_var, value="histories").pack(anchor=tk.W)
         ttk.Radiobutton(type_frame, text="盘点汇总", variable=self.export_type_var, value="checks_summary").pack(anchor=tk.W)
+        ttk.Radiobutton(type_frame, text="校准排程汇总", variable=self.export_type_var, value="calibration_schedules_summary").pack(anchor=tk.W)
+        ttk.Radiobutton(type_frame, text="校准排程明细", variable=self.export_type_var, value="calibration_schedule_items").pack(anchor=tk.W)
+        ttk.Radiobutton(type_frame, text="冲突明细", variable=self.export_type_var, value="calibration_schedule_conflicts").pack(anchor=tk.W)
+        ttk.Radiobutton(type_frame, text="逾期清单", variable=self.export_type_var, value="overdue_calibration_items").pack(anchor=tk.W)
         ttk.Radiobutton(type_frame, text="全部数据", variable=self.export_type_var, value="all").pack(anchor=tk.W)
         row += 1
         
@@ -1124,4 +1133,879 @@ class InventoryCheckDetailDialog(BaseDialog):
         tree.tag_configure("待处理", foreground="red")
         tree.tag_configure("确认更新", foreground="green")
         tree.tag_configure("忽略", foreground="gray")
+        tree.tag_configure("强制更新", foreground="blue")
+
+
+class CalibrationScheduleConflictResolveDialog(BaseDialog):
+    def __init__(self, parent, conflict: CalibrationScheduleConflict,
+                 is_admin: bool = True):
+        self.conflict = conflict
+        self.is_admin = is_admin
+        self.resolution_var = tk.StringVar(value=CalibrationConflictResolution.CONFIRM.value)
+        self.notes_var = tk.StringVar()
+        super().__init__(parent, "处理校准冲突", "550x450")
+
+    def _create_content(self):
+        info_frame = ttk.LabelFrame(self.main_frame, text="冲突信息", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+
+        grid = ttk.Frame(info_frame)
+        grid.pack(fill=tk.X)
+
+        ttk.Label(grid, text="冲突类型:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(grid, text=self.conflict.conflict_type.value, foreground="red", font=('bold', 10)).grid(row=0, column=1, sticky=tk.W)
+
+        ttk.Label(grid, text="序列号:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=self.conflict.serial_number).grid(row=1, column=1, sticky=tk.W, pady=5)
+
+        ttk.Label(grid, text="仪器名称:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=self.conflict.instrument_name or "未知").grid(row=2, column=1, sticky=tk.W, pady=5)
+
+        ttk.Label(grid, text="系统记录:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=self.conflict.expected_value, foreground="blue").grid(row=3, column=1, sticky=tk.W, pady=5)
+
+        ttk.Label(grid, text="导入记录:").grid(row=4, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=self.conflict.actual_value, foreground="darkgreen").grid(row=4, column=1, sticky=tk.W, pady=5)
+
+        if self.conflict.notes:
+            ttk.Label(grid, text="备注:").grid(row=5, column=0, sticky=tk.W, pady=5)
+            ttk.Label(grid, text=self.conflict.notes, wraplength=300).grid(row=5, column=1, sticky=tk.W, pady=5)
+
+        if self.is_admin:
+            resolve_frame = ttk.LabelFrame(self.main_frame, text="处理方式", padding="10")
+            resolve_frame.pack(fill=tk.X, pady=(0, 10))
+
+            resolutions = [
+                CalibrationConflictResolution.CONFIRM.value,
+                CalibrationConflictResolution.IGNORE.value,
+            ]
+            for i, res in enumerate(resolutions):
+                ttk.Radiobutton(resolve_frame, text=res, variable=self.resolution_var, value=res).pack(anchor=tk.W, pady=2)
+
+            notes_frame = ttk.LabelFrame(self.main_frame, text="处理备注", padding="10")
+            notes_frame.pack(fill=tk.X)
+            ttk.Entry(notes_frame, textvariable=self.notes_var, width=50).pack(fill=tk.X)
+        else:
+            ttk.Label(self.main_frame, text="普通用户仅可查看，无法处理冲突",
+                      foreground="red", font=('bold', 10)).pack(pady=10)
+
+    def _on_ok(self):
+        if not self.is_admin:
+            self.result = False
+            super()._on_cancel()
+            return
+
+        self.result = {
+            'resolution': CalibrationConflictResolution(self.resolution_var.get()),
+            'notes': self.notes_var.get().strip()
+        }
+        super()._on_ok()
+
+
+class CalibrationScheduleCompleteDialog(BaseDialog):
+    def __init__(self, parent, item: CalibrationScheduleItem,
+                 is_admin: bool = True):
+        self.item = item
+        self.is_admin = is_admin
+        self.cal_date_var = tk.StringVar(value=date.today().isoformat())
+        self.next_cal_date_var = tk.StringVar(value=(date.today() + timedelta(days=365)).isoformat())
+        self.cert_var = tk.StringVar(value=item.certificate_number)
+        self.agency_var = tk.StringVar(value=item.calibration_agency)
+        self.result_var = tk.StringVar(value="合格")
+        self.notes_var = tk.StringVar()
+        super().__init__(parent, f"完成校准: {item.instrument_name}", "500x450")
+
+    def _create_content(self):
+        info_frame = ttk.LabelFrame(self.main_frame, text="仪器信息", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 15))
+
+        ttk.Label(info_frame, text=f"仪器名称: {self.item.instrument_name}").pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"型号: {self.item.serial_number}").pack(anchor=tk.W)
+        current_cal = self.item.planned_date.isoformat()
+        ttk.Label(info_frame, text=f"计划校准日期: {current_cal}").pack(anchor=tk.W)
+
+        if self.is_admin:
+            form_frame = ttk.Frame(self.main_frame)
+            form_frame.pack(fill=tk.BOTH, expand=True)
+
+            row = 0
+            ttk.Label(form_frame, text="校准日期:").grid(row=row, column=0, sticky=tk.W, pady=5)
+            ttk.Entry(form_frame, textvariable=self.cal_date_var, width=35).grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+            row += 1
+
+            ttk.Label(form_frame, text="下次校准日期:").grid(row=row, column=0, sticky=tk.W, pady=5)
+            ttk.Entry(form_frame, textvariable=self.next_cal_date_var, width=35).grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+            row += 1
+
+            ttk.Label(form_frame, text="证书编号:").grid(row=row, column=0, sticky=tk.W, pady=5)
+            ttk.Entry(form_frame, textvariable=self.cert_var, width=35).grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+            row += 1
+
+            ttk.Label(form_frame, text="校准机构:").grid(row=row, column=0, sticky=tk.W, pady=5)
+            ttk.Entry(form_frame, textvariable=self.agency_var, width=35).grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+            row += 1
+
+            ttk.Label(form_frame, text="校准结果:").grid(row=row, column=0, sticky=tk.W, pady=5)
+            result_combo = ttk.Combobox(form_frame, textvariable=self.result_var,
+                                         values=["合格", "不合格", "限制使用"],
+                                         state="readonly", width=33)
+            result_combo.grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+            row += 1
+
+            ttk.Label(form_frame, text="备注:").grid(row=row, column=0, sticky=tk.NW, pady=5)
+            notes_text = tk.Text(form_frame, height=3, width=35)
+            notes_text.grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+            self.notes_text = notes_text
+            row += 1
+
+            form_frame.columnconfigure(1, weight=1)
+        else:
+            ttk.Label(self.main_frame, text="普通用户仅可查看，无法完成校准",
+                      foreground="red", font=('bold', 10)).pack(pady=10)
+
+    def _on_ok(self):
+        if not self.is_admin:
+            self.result = False
+            super()._on_cancel()
+            return
+
+        try:
+            cal_date = date.fromisoformat(self.cal_date_var.get().strip())
+        except ValueError:
+            messagebox.showerror("错误", "校准日期格式不正确", parent=self)
+            return
+
+        try:
+            next_cal_date = date.fromisoformat(self.next_cal_date_var.get().strip())
+        except ValueError:
+            messagebox.showerror("错误", "下次校准日期格式不正确", parent=self)
+            return
+
+        if not self.cert_var.get().strip():
+            messagebox.showerror("错误", "请输入证书编号", parent=self)
+            return
+
+        if not self.agency_var.get().strip():
+            messagebox.showerror("错误", "请输入校准机构", parent=self)
+            return
+
+        self.result = {
+            'calibration_date': cal_date,
+            'next_calibration_date': next_cal_date,
+            'certificate_number': self.cert_var.get().strip(),
+            'calibration_agency': self.agency_var.get().strip(),
+            'result': self.result_var.get().strip(),
+            'notes': self.notes_text.get("1.0", tk.END).strip(),
+        }
+        super()._on_ok()
+
+
+class CalibrationScheduleDialog(BaseDialog):
+    def __init__(self, parent, service: InstrumentService):
+        self.service = service
+        self.user = service.get_current_user()
+        self.is_admin = self.user.can_calibrate()
+        self.name_var = tk.StringVar(value=f"校准排程-{date.today().strftime('%Y%m')}")
+        self.notes_var = tk.StringVar()
+        self.filepath_var = tk.StringVar()
+        self.import_items = []
+        self.schedule: Optional[CalibrationSchedule] = None
+        self.conflicts: list[CalibrationScheduleConflict] = []
+        self.items: list[CalibrationScheduleItem] = []
+        super().__init__(parent, "校准排程管理", "900x650")
+
+    def _create_content(self):
+        notebook = ttk.Notebook(self.main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        self.import_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.import_frame, text="1. 导入排程")
+
+        self.items_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.items_frame, text="2. 校准计划")
+        notebook.tab(self.items_frame, state=tk.DISABLED)
+
+        self.conflict_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.conflict_frame, text="3. 冲突处理")
+        notebook.tab(self.conflict_frame, state=tk.DISABLED)
+
+        self.complete_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.complete_frame, text="4. 完成校准")
+        notebook.tab(self.complete_frame, state=tk.DISABLED)
+
+        self.notebook = notebook
+        self._create_import_page()
+        self._create_items_page()
+        self._create_conflict_page()
+        self._create_complete_page()
+
+    def _create_import_page(self):
+        grid = ttk.Frame(self.import_frame)
+        grid.pack(fill=tk.BOTH, expand=True)
+
+        row = 0
+        ttk.Label(grid, text="排程名称:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(grid, textvariable=self.name_var, width=50).grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+        row += 1
+
+        ttk.Label(grid, text="备注:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(grid, textvariable=self.notes_var, width=50).grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+        row += 1
+
+        ttk.Label(grid, text="排程文件:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        file_frame = ttk.Frame(grid)
+        file_frame.grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+        ttk.Entry(file_frame, textvariable=self.filepath_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(file_frame, text="浏览...", command=self._on_browse_file).pack(side=tk.LEFT, padx=(10, 0))
+        row += 1
+
+        ttk.Separator(grid, orient=tk.HORIZONTAL).grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=10)
+        row += 1
+
+        ttk.Label(grid, text="文件格式说明:", font=('bold', 10)).grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        row += 1
+
+        help_text = "必填字段：序列号(serial_number)、计划日期(planned_date)\n可选字段：校准机构(calibration_agency)、证书编号(certificate_number)、备注(notes)\n支持格式：CSV、JSON"
+        help_label = ttk.Label(grid, text=help_text, foreground="gray", justify=tk.LEFT)
+        help_label.grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        row += 1
+
+        self.import_status_var = tk.StringVar(value="")
+        ttk.Label(grid, textvariable=self.import_status_var, foreground="blue").grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=10)
+        row += 1
+
+        if self.is_admin:
+            ttk.Button(grid, text="导入并检测冲突", command=self._on_import).grid(row=row, column=1, sticky=tk.E)
+        else:
+            ttk.Label(grid, text="普通用户仅可查看历史排程",
+                      foreground="red", font=('bold', 10)).grid(row=row, column=0, columnspan=2, sticky=tk.W)
+
+        grid.columnconfigure(1, weight=1)
+
+    def _create_items_page(self):
+        columns = ("name", "serial", "planned_date", "agency", "cert", "status", "processed_by", "processed_at")
+        self.items_tree = ttk.Treeview(self.items_frame, columns=columns, show="headings")
+
+        headings = [
+            ("name", "仪器名称", 180),
+            ("serial", "序列号", 120),
+            ("planned_date", "计划日期", 100),
+            ("agency", "校准机构", 150),
+            ("cert", "证书编号", 120),
+            ("status", "状态", 100),
+            ("processed_by", "处理人", 100),
+            ("processed_at", "处理时间", 150),
+        ]
+        for col, text, width in headings:
+            self.items_tree.heading(col, text=text)
+            self.items_tree.column(col, width=width, anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(self.items_frame, orient=tk.VERTICAL, command=self.items_tree.yview)
+        self.items_tree.configure(yscrollcommand=scrollbar.set)
+
+        self.items_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btn_frame = ttk.Frame(self.items_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+
+        if self.is_admin:
+            self.complete_item_btn = ttk.Button(btn_frame, text="完成校准", command=self._on_complete_item, state=tk.DISABLED)
+            self.complete_item_btn.pack(side=tk.LEFT, padx=5)
+
+        self.items_stats_var = tk.StringVar(value="")
+        ttk.Label(btn_frame, textvariable=self.items_stats_var).pack(side=tk.RIGHT)
+
+        self.items_tree.bind("<Double-1>", lambda e: self._on_complete_item())
+        self.items_tree.bind("<<TreeviewSelect>>", self._on_item_select)
+
+    def _create_conflict_page(self):
+        self.conflict_tree = ttk.Treeview(
+            self.conflict_frame,
+            columns=("type", "serial", "name", "expected", "actual", "resolution", "resolved_by", "resolved_at"),
+            show="headings"
+        )
+        headings = [
+            ("type", "冲突类型", 120),
+            ("serial", "序列号", 120),
+            ("name", "仪器名称", 150),
+            ("expected", "系统值", 150),
+            ("actual", "导入值", 150),
+            ("resolution", "处理状态", 100),
+            ("resolved_by", "处理人", 100),
+            ("resolved_at", "处理时间", 150),
+        ]
+        for col, text, width in headings:
+            self.conflict_tree.heading(col, text=text)
+            self.conflict_tree.column(col, width=width, anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(self.conflict_frame, orient=tk.VERTICAL, command=self.conflict_tree.yview)
+        self.conflict_tree.configure(yscrollcommand=scrollbar.set)
+
+        self.conflict_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btn_frame = ttk.Frame(self.conflict_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+
+        if self.is_admin:
+            ttk.Button(btn_frame, text="处理选中", command=self._on_resolve_selected).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="全部确认", command=self._on_resolve_all_confirm).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="全部忽略", command=self._on_resolve_all_ignore).pack(side=tk.LEFT, padx=5)
+
+        self.conflict_stats_var = tk.StringVar(value="")
+        ttk.Label(btn_frame, textvariable=self.conflict_stats_var).pack(side=tk.RIGHT)
+
+        self.conflict_tree.bind("<Double-1>", lambda e: self._on_resolve_selected())
+
+    def _create_complete_page(self):
+        self.complete_summary_text = tk.Text(self.complete_frame, wrap=tk.WORD, height=20)
+        self.complete_summary_text.pack(fill=tk.BOTH, expand=True)
+
+    def _on_browse_file(self):
+        from tkinter import filedialog
+        filepath = filedialog.askopenfilename(
+            title="选择校准排程文件",
+            filetypes=[("CSV文件", "*.csv"), ("JSON文件", "*.json"), ("所有文件", "*.*")],
+            parent=self
+        )
+        if filepath:
+            self.filepath_var.set(filepath)
+
+    def _on_import(self):
+        if not self.is_admin:
+            messagebox.showinfo("提示", "您没有导入权限", parent=self)
+            return
+
+        if not self.name_var.get().strip():
+            messagebox.showerror("错误", "请输入排程名称", parent=self)
+            return
+
+        filepath = self.filepath_var.get().strip()
+        if not filepath:
+            messagebox.showerror("错误", "请选择排程文件", parent=self)
+            return
+
+        success, msg, items = self.service.parse_calibration_schedule_file(filepath)
+        if not success:
+            messagebox.showerror("导入失败", msg, parent=self)
+            return
+
+        self.import_status_var.set(msg)
+        self.import_items = items
+
+        success, msg, schedule = self.service.create_calibration_schedule(
+            name=self.name_var.get().strip(),
+            notes=self.notes_var.get().strip()
+        )
+        if not success:
+            messagebox.showerror("创建失败", msg, parent=self)
+            return
+
+        self.schedule = schedule
+
+        success, msg, conflicts = self.service.detect_calibration_conflicts(schedule.id, items)
+        if not success:
+            messagebox.showerror("检测失败", msg, parent=self)
+            return
+
+        self.conflicts = conflicts
+        self.items = self.service.get_calibration_schedule_items(schedule.id)
+
+        self._refresh_items_tree()
+        self._refresh_conflict_tree()
+
+        self.notebook.tab(self.items_frame, state=tk.NORMAL)
+        self.notebook.tab(self.conflict_frame, state=tk.NORMAL)
+        self.notebook.tab(self.complete_frame, state=tk.NORMAL)
+        self.notebook.select(self.items_frame)
+
+    def _refresh_items_tree(self):
+        for item in self.items_tree.get_children():
+            self.items_tree.delete(item)
+
+        items = self.service.get_calibration_schedule_items(self.schedule.id) if self.schedule else self.items
+        for item in items:
+            self.items_tree.insert("", tk.END, iid=item.id, values=(
+                item.instrument_name,
+                item.serial_number,
+                item.planned_date.isoformat(),
+                item.calibration_agency,
+                item.certificate_number,
+                item.status.value,
+                item.processed_by or "",
+                item.processed_at.strftime("%Y-%m-%d %H:%M:%S") if item.processed_at else "",
+            ), tags=(item.status.value,))
+
+        self.items_tree.tag_configure("待校准", foreground="darkorange")
+        self.items_tree.tag_configure("校准中", foreground="blue")
+        self.items_tree.tag_configure("已完成", foreground="green")
+        self.items_tree.tag_configure("已逾期", foreground="red")
+        self.items_tree.tag_configure("已取消", foreground="gray")
+
+        if self.schedule:
+            schedule = self.service.get_calibration_schedule_by_id(self.schedule.id)
+            if schedule:
+                items_list = self.service.get_calibration_schedule_items(schedule.id)
+                schedule.refresh_status(items_list)
+                self.items_stats_var.set(
+                    f"共 {len(items_list)} 条计划，"
+                    f"待校准 {sum(1 for i in items_list if i.status == CalibrationScheduleItemStatus.SCHEDULED)} 条，"
+                    f"已逾期 {sum(1 for i in items_list if i.status == CalibrationScheduleItemStatus.OVERDUE)} 条，"
+                    f"已完成 {schedule.completed_count} 条"
+                )
+
+    def _refresh_conflict_tree(self):
+        for item in self.conflict_tree.get_children():
+            self.conflict_tree.delete(item)
+
+        conflicts = self.service.get_calibration_schedule_conflicts(self.schedule.id) if self.schedule else self.conflicts
+        for conflict in conflicts:
+            self.conflict_tree.insert("", tk.END, iid=conflict.id, values=(
+                conflict.conflict_type.value,
+                conflict.serial_number,
+                conflict.instrument_name or "未知",
+                conflict.expected_value,
+                conflict.actual_value,
+                conflict.resolution.value,
+                conflict.resolved_by or "",
+                conflict.resolved_at.strftime("%Y-%m-%d %H:%M:%S") if conflict.resolved_at else "",
+            ), tags=(conflict.resolution.value,))
+
+        self.conflict_tree.tag_configure("待处理", foreground="red")
+        self.conflict_tree.tag_configure("确认导入", foreground="green")
+        self.conflict_tree.tag_configure("忽略跳过", foreground="gray")
+        self.conflict_tree.tag_configure("强制更新", foreground="blue")
+
+        pending = sum(1 for c in conflicts if c.resolution == CalibrationConflictResolution.PENDING)
+        self.conflict_stats_var.set(f"共 {len(conflicts)} 条冲突，待处理 {pending} 条")
+
+    def _on_item_select(self, event):
+        if not self.is_admin:
+            return
+        selection = self.items_tree.selection()
+        if selection:
+            item_id = selection[0]
+            item = next((i for i in self.items if i.id == item_id), None)
+            if item and item.status != CalibrationScheduleItemStatus.COMPLETED:
+                self.complete_item_btn.config(state=tk.NORMAL)
+            else:
+                self.complete_item_btn.config(state=tk.DISABLED)
+        else:
+            self.complete_item_btn.config(state=tk.DISABLED)
+
+    def _on_complete_item(self):
+        if not self.is_admin:
+            return
+        selection = self.items_tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请选择要完成校准的排程项", parent=self)
+            return
+
+        item_id = selection[0]
+        item = self.service.get_calibration_schedule_item_by_id(item_id)
+        if not item:
+            return
+
+        if item.status == CalibrationScheduleItemStatus.COMPLETED:
+            messagebox.showinfo("提示", "该排程项已完成校准", parent=self)
+            return
+
+        dialog = CalibrationScheduleCompleteDialog(self, item, self.is_admin)
+        if dialog.show() and dialog.result:
+            data = dialog.result
+            success, message, updated_item = self.service.complete_calibration_schedule_item(
+                item_id=item.id,
+                calibration_date=data['calibration_date'],
+                next_calibration_date=data['next_calibration_date'],
+                certificate_number=data['certificate_number'],
+                calibration_agency=data['calibration_agency'],
+                result=data['result'],
+                notes=data['notes'],
+            )
+            if success:
+                self._refresh_items_tree()
+                self._show_complete_summary()
+                messagebox.showinfo("成功", message, parent=self)
+            else:
+                messagebox.showerror("校准失败", message, parent=self)
+
+    def _on_resolve_selected(self):
+        if not self.is_admin:
+            return
+        selection = self.conflict_tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请选择要处理的冲突", parent=self)
+            return
+
+        conflict_id = selection[0]
+        conflict = self.service.get_calibration_schedule_conflict_by_id(conflict_id)
+        if not conflict:
+            return
+
+        dialog = CalibrationScheduleConflictResolveDialog(self, conflict, self.is_admin)
+        if dialog.show() and dialog.result:
+            resolution = dialog.result['resolution']
+            notes = dialog.result.get('notes', '')
+
+            success, msg, _ = self.service.resolve_calibration_conflict(
+                conflict_id=conflict_id,
+                resolution=resolution,
+                notes=notes
+            )
+            if success:
+                conflict.resolution = resolution
+                conflict.resolved_by = self.user.display_name
+                conflict.resolved_at = datetime.now()
+                conflict.notes = notes
+                self._refresh_conflict_tree()
+                self._refresh_items_tree()
+                self._check_all_resolved()
+            else:
+                messagebox.showerror("处理失败", msg, parent=self)
+
+    def _on_resolve_all_confirm(self):
+        if not self.is_admin:
+            return
+        if not messagebox.askyesno("确认", "确定要确认所有待处理的冲突吗？", parent=self):
+            return
+
+        success, msg, count = self.service.resolve_all_calibration_conflicts(
+            self.schedule.id,
+            CalibrationConflictResolution.CONFIRM
+        )
+        if success:
+            for conflict in self.conflicts:
+                if conflict.resolution == CalibrationConflictResolution.PENDING:
+                    conflict.resolution = CalibrationConflictResolution.CONFIRM
+                    conflict.resolved_by = self.user.display_name
+                    conflict.resolved_at = datetime.now()
+            self._refresh_conflict_tree()
+            self._refresh_items_tree()
+            messagebox.showinfo("成功", msg, parent=self)
+            self._check_all_resolved()
+        else:
+            messagebox.showerror("处理失败", msg, parent=self)
+
+    def _on_resolve_all_ignore(self):
+        if not self.is_admin:
+            return
+        if not messagebox.askyesno("确认", "确定要忽略所有待处理的冲突吗？", parent=self):
+            return
+
+        success, msg, count = self.service.resolve_all_calibration_conflicts(
+            self.schedule.id,
+            CalibrationConflictResolution.IGNORE
+        )
+        if success:
+            for conflict in self.conflicts:
+                if conflict.resolution == CalibrationConflictResolution.PENDING:
+                    conflict.resolution = CalibrationConflictResolution.IGNORE
+                    conflict.resolved_by = self.user.display_name
+                    conflict.resolved_at = datetime.now()
+            self._refresh_conflict_tree()
+            self._refresh_items_tree()
+            messagebox.showinfo("成功", msg, parent=self)
+            self._check_all_resolved()
+        else:
+            messagebox.showerror("处理失败", msg, parent=self)
+
+    def _check_all_resolved(self):
+        conflicts = self.service.get_calibration_schedule_conflicts(self.schedule.id)
+        pending = sum(1 for c in conflicts if c.resolution == CalibrationConflictResolution.PENDING)
+        if pending == 0:
+            self._show_complete_summary()
+
+    def _show_complete_summary(self):
+        schedule = self.service.get_calibration_schedule_by_id(self.schedule.id)
+        items = self.service.get_calibration_schedule_items(self.schedule.id)
+        conflicts = self.service.get_calibration_schedule_conflicts(self.schedule.id)
+
+        summary = f"校准排程处理完成！\n\n"
+        summary += f"排程名称: {schedule.name}\n"
+        summary += f"创建人: {schedule.creator}\n"
+        summary += f"计划日期: {schedule.plan_date}\n"
+        summary += f"总条目数: {schedule.total_items}\n"
+        summary += f"已完成数: {schedule.completed_count}\n"
+        summary += f"冲突数量: {schedule.conflict_count}\n\n"
+
+        type_counts = {}
+        res_counts = {}
+        status_counts = {}
+        for c in conflicts:
+            type_counts[c.conflict_type.value] = type_counts.get(c.conflict_type.value, 0) + 1
+            res_counts[c.resolution.value] = res_counts.get(c.resolution.value, 0) + 1
+        for i in items:
+            status_counts[i.status.value] = status_counts.get(i.status.value, 0) + 1
+
+        summary += "按冲突类型统计:\n"
+        for typ, cnt in type_counts.items():
+            summary += f"  {typ}: {cnt} 条\n"
+
+        summary += "\n按处理结果统计:\n"
+        for res, cnt in res_counts.items():
+            summary += f"  {res}: {cnt} 条\n"
+
+        summary += "\n按计划状态统计:\n"
+        for status, cnt in status_counts.items():
+            summary += f"  {status}: {cnt} 条\n"
+
+        if schedule.can_undo:
+            summary += f"\n本次排程完成了 {len(schedule.undo_snapshot.get('items', [])) if schedule.undo_snapshot else 0} 条校准，可在主界面点击\"撤销校准\"撤回。"
+
+        self.complete_summary_text.delete(1.0, tk.END)
+        self.complete_summary_text.insert(1.0, summary)
+        self.complete_summary_text.config(state=tk.DISABLED)
+
+    def _on_ok(self):
+        self.result = True
+        super()._on_ok()
+
+
+class CalibrationScheduleHistoryDialog(BaseDialog):
+    def __init__(self, parent, service: InstrumentService):
+        self.service = service
+        self.user = service.get_current_user()
+        self.is_admin = self.user.can_calibrate()
+        super().__init__(parent, "校准排程历史", "950x550")
+
+    def _create_content(self):
+        columns = ("name", "creator", "date", "total", "completed", "conflicts", "status", "can_undo", "created")
+        self.tree = ttk.Treeview(self.main_frame, columns=columns, show="headings")
+
+        headings = [
+            ("name", "排程名称", 180),
+            ("creator", "创建人", 100),
+            ("date", "计划日期", 100),
+            ("total", "总条目", 80),
+            ("completed", "已完成", 80),
+            ("conflicts", "冲突数", 80),
+            ("status", "状态", 100),
+            ("can_undo", "可撤销", 80),
+            ("created", "创建时间", 150),
+        ]
+        for col, text, width in headings:
+            self.tree.heading(col, text=text)
+            self.tree.column(col, width=width, anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(self.main_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btn_frame = ttk.Frame(self.main_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+
+        ttk.Button(btn_frame, text="查看明细", command=self._on_view_detail).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="导出当前排程", command=self._on_export_current).pack(side=tk.LEFT, padx=5)
+
+        self._load_history()
+        self.tree.bind("<Double-1>", lambda e: self._on_view_detail())
+
+    def _load_history(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        schedules = self.service.get_calibration_schedules()
+        for schedule in schedules:
+            self.tree.insert("", tk.END, iid=schedule.id, values=(
+                schedule.name,
+                schedule.creator,
+                schedule.plan_date.isoformat(),
+                schedule.total_items,
+                schedule.completed_count,
+                schedule.conflict_count,
+                schedule.status.value,
+                "是" if schedule.can_undo else "否",
+                schedule.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            ))
+
+    def _on_view_detail(self):
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请选择排程记录", parent=self)
+            return
+
+        schedule_id = selection[0]
+        schedule = self.service.get_calibration_schedule_by_id(schedule_id)
+        items = self.service.get_calibration_schedule_items(schedule_id)
+        conflicts = self.service.get_calibration_schedule_conflicts(schedule_id)
+
+        dialog = CalibrationScheduleDetailDialog(self, schedule, items, conflicts, self.is_admin)
+        dialog.show()
+
+    def _on_export_current(self):
+        from tkinter import filedialog
+
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请选择排程记录", parent=self)
+            return
+
+        schedule_id = selection[0]
+        schedule = self.service.get_calibration_schedule_by_id(schedule_id)
+        items = self.service.get_calibration_schedule_items(schedule_id)
+        conflicts = self.service.get_calibration_schedule_conflicts(schedule_id)
+
+        filepath = filedialog.asksaveasfilename(
+            title="导出校准排程",
+            defaultextension=".csv",
+            filetypes=[("CSV文件", "*.csv"), ("JSON文件", "*.json")],
+            initialfile=f"calibration_schedule_{schedule.name}_{date.today().strftime('%Y%m%d')}",
+            parent=self
+        )
+        if not filepath:
+            return
+
+        try:
+            ext = os.path.splitext(filepath)[1].lower()
+            if ext == '.csv':
+                DataExporter.export_calibration_schedule_full_to_csv(schedule, items, conflicts, filepath)
+            else:
+                data = {
+                    'summary': schedule.to_dict(),
+                    'items': [i.to_dict() for i in items],
+                    'conflicts': [c.to_dict() for c in conflicts],
+                }
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2, default=DataExporter._default_serializer)
+
+            messagebox.showinfo("导出成功", f"校准排程已导出到:\n{filepath}", parent=self)
+        except Exception as e:
+            messagebox.showerror("导出失败", str(e), parent=self)
+
+
+class CalibrationScheduleDetailDialog(BaseDialog):
+    def __init__(self, parent, schedule: CalibrationSchedule,
+                 items: list, conflicts: list, is_admin: bool = True):
+        self.schedule = schedule
+        self.items = items
+        self.conflicts = conflicts
+        self.is_admin = is_admin
+        super().__init__(parent, f"排程明细 - {schedule.name}", "950x600")
+
+    def _create_content(self):
+        notebook = ttk.Notebook(self.main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        info_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(info_frame, text="排程概览")
+
+        items_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(items_frame, text="校准计划")
+
+        conflicts_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(conflicts_frame, text="冲突明细")
+
+        self._create_info_page(info_frame)
+        self._create_items_page(items_frame)
+        self._create_conflicts_page(conflicts_frame)
+
+    def _create_info_page(self, parent):
+        info_frame = ttk.LabelFrame(parent, text="排程概览", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+
+        grid = ttk.Frame(info_frame)
+        grid.pack(fill=tk.X)
+
+        info = [
+            ("排程名称", self.schedule.name),
+            ("创建人", self.schedule.creator),
+            ("计划日期", self.schedule.plan_date.isoformat()),
+            ("总条目", str(self.schedule.total_items)),
+            ("已完成", str(self.schedule.completed_count)),
+            ("冲突数", str(self.schedule.conflict_count)),
+            ("状态", self.schedule.status.value),
+            ("可撤销", "是" if self.schedule.can_undo else "否"),
+        ]
+        for i, (label, value) in enumerate(info):
+            ttk.Label(grid, text=f"{label}:").grid(row=i//2, column=(i%2)*2, sticky=tk.W, padx=(0, 5), pady=3)
+            ttk.Label(grid, text=value, font=('bold', 10)).grid(row=i//2, column=(i%2)*2+1, sticky=tk.W, pady=3)
+
+        if not self.is_admin:
+            ttk.Label(parent, text="普通用户仅可查看，无法进行操作",
+                      foreground="red", font=('bold', 10)).pack(pady=10)
+
+    def _create_items_page(self, parent):
+        columns = ("name", "serial", "planned_date", "agency", "cert", "status", "result", "processed_by")
+        tree = ttk.Treeview(parent, columns=columns, show="headings")
+
+        headings = [
+            ("name", "仪器名称", 180),
+            ("serial", "序列号", 120),
+            ("planned_date", "计划日期", 100),
+            ("agency", "校准机构", 150),
+            ("cert", "证书编号", 120),
+            ("status", "状态", 100),
+            ("result", "结果", 100),
+            ("processed_by", "处理人", 100),
+        ]
+        for col, text, width in headings:
+            tree.heading(col, text=text)
+            tree.column(col, width=width, anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=(0, 10))
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 10))
+
+        for item in self.items:
+            tree.insert("", tk.END, values=(
+                item.instrument_name,
+                item.serial_number,
+                item.planned_date.isoformat(),
+                item.calibration_agency,
+                item.certificate_number,
+                item.status.value,
+                item.result or "-",
+                item.processed_by or "",
+            ), tags=(item.status.value,))
+
+        tree.tag_configure("待校准", foreground="darkorange")
+        tree.tag_configure("校准中", foreground="blue")
+        tree.tag_configure("已完成", foreground="green")
+        tree.tag_configure("已逾期", foreground="red")
+        tree.tag_configure("已取消", foreground="gray")
+
+    def _create_conflicts_page(self, parent):
+        columns = ("type", "serial", "name", "expected", "actual", "resolution", "resolved_by", "resolved_at")
+        tree = ttk.Treeview(parent, columns=columns, show="headings")
+
+        headings = [
+            ("type", "冲突类型", 120),
+            ("serial", "序列号", 120),
+            ("name", "仪器名称", 150),
+            ("expected", "系统值", 120),
+            ("actual", "导入值", 120),
+            ("resolution", "处理结论", 100),
+            ("resolved_by", "处理人", 100),
+            ("resolved_at", "处理时间", 150),
+        ]
+        for col, text, width in headings:
+            tree.heading(col, text=text)
+            tree.column(col, width=width, anchor=tk.W)
+
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=(0, 10))
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 10))
+
+        for c in self.conflicts:
+            tree.insert("", tk.END, values=(
+                c.conflict_type.value,
+                c.serial_number,
+                c.instrument_name or "未知",
+                c.expected_value,
+                c.actual_value,
+                c.resolution.value,
+                c.resolved_by or "",
+                c.resolved_at.strftime("%Y-%m-%d %H:%M:%S") if c.resolved_at else "",
+            ), tags=(c.resolution.value,))
+
+        tree.tag_configure("待处理", foreground="red")
+        tree.tag_configure("确认导入", foreground="green")
+        tree.tag_configure("忽略跳过", foreground="gray")
         tree.tag_configure("强制更新", foreground="blue")

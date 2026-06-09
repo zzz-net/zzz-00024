@@ -23,6 +23,9 @@ from .dialogs import (
     ConflictResolveDialog,
     InventoryCheckHistoryDialog,
     InventoryCheckDetailDialog,
+    CalibrationScheduleDialog,
+    CalibrationScheduleHistoryDialog,
+    CalibrationScheduleDetailDialog,
 )
 
 
@@ -77,6 +80,13 @@ class MainWindow(ttk.Frame):
         self.undo_check_btn = ttk.Button(left_frame, text="撤销盘点", command=self._on_undo_check, state=tk.DISABLED)
         self.undo_check_btn.pack(side=tk.LEFT, padx=5)
         ttk.Button(left_frame, text="盘点历史", command=self._on_check_history).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(left_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        ttk.Button(left_frame, text="校准排程", command=self._on_calibration_schedule).pack(side=tk.LEFT, padx=5)
+        self.undo_calibration_btn = ttk.Button(left_frame, text="撤销校准", command=self._on_undo_calibration, state=tk.DISABLED)
+        self.undo_calibration_btn.pack(side=tk.LEFT, padx=5)
+        ttk.Button(left_frame, text="排程历史", command=self._on_calibration_schedule_history).pack(side=tk.LEFT, padx=5)
         
         ttk.Separator(left_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
         
@@ -273,6 +283,9 @@ class MainWindow(ttk.Frame):
         
         can_undo, _ = self.service.can_undo_last_check()
         self.undo_check_btn.config(state=tk.NORMAL if can_undo else tk.DISABLED)
+        
+        can_undo_cal, _ = self.service.can_undo_last_calibration_schedule()
+        self.undo_calibration_btn.config(state=tk.NORMAL if can_undo_cal and user.can_calibrate() else tk.DISABLED)
         
         if has_selection and instr:
             can_borrow, _ = instr.can_borrow()
@@ -548,6 +561,10 @@ class MainWindow(ttk.Frame):
                         "calibrations": "calibration_records",
                         "histories": "operation_histories",
                         "checks_summary": "inventory_checks_summary",
+                        "calibration_schedules_summary": "calibration_schedules_summary",
+                        "calibration_schedule_items": "calibration_schedule_items",
+                        "calibration_schedule_conflicts": "calibration_schedule_conflicts",
+                        "overdue_calibration_items": "overdue_calibration_items",
                     }
                     prefix = prefix_map.get(export_type, "export")
                     filename = DataExporter.generate_export_filename(prefix, format_type, export_dir)
@@ -583,6 +600,30 @@ class MainWindow(ttk.Frame):
                             filepath = DataExporter.export_inventory_checks_summary_to_csv(records, filename)
                         else:
                             filepath = DataExporter.export_inventory_checks_summary_to_json(records, filename)
+                    elif export_type == "calibration_schedules_summary":
+                        records = self.service.get_calibration_schedules()
+                        if format_type == "csv":
+                            filepath = DataExporter.export_calibration_schedules_summary_to_csv(records, filename)
+                        else:
+                            filepath = DataExporter.export_calibration_schedules_summary_to_json(records, filename)
+                    elif export_type == "calibration_schedule_items":
+                        records = self.service.get_calibration_schedule_items()
+                        if format_type == "csv":
+                            filepath = DataExporter.export_calibration_schedule_items_to_csv(records, filename, instruments)
+                        else:
+                            filepath = DataExporter.export_calibration_schedule_items_to_json(records, filename)
+                    elif export_type == "calibration_schedule_conflicts":
+                        records = self.service.get_calibration_schedule_conflicts()
+                        if format_type == "csv":
+                            filepath = DataExporter.export_calibration_schedule_conflicts_to_csv(records, filename)
+                        else:
+                            filepath = DataExporter.export_calibration_schedule_conflicts_to_json(records, filename)
+                    elif export_type == "overdue_calibration_items":
+                        records = service.get_overdue_calibration_items()
+                        if format_type == "csv":
+                            filepath = DataExporter.export_overdue_calibration_items_to_csv(records, filename)
+                        else:
+                            filepath = DataExporter.export_overdue_calibration_items_to_json(records, filename)
                 
                 messagebox.showinfo("导出成功", f"数据已导出到:\n{filepath}", parent=self.parent)
                 if hasattr(os, 'startfile'):
@@ -592,3 +633,48 @@ class MainWindow(ttk.Frame):
                         pass
             except Exception as e:
                 messagebox.showerror("导出失败", f"导出时发生错误: {str(e)}", parent=self.parent)
+
+    def _on_calibration_schedule(self):
+        from .dialogs import CalibrationScheduleDialog
+        user = self.service.get_current_user()
+        is_admin = user.can_calibrate()
+        dialog = CalibrationScheduleDialog(self.parent, self.service, is_admin=is_admin)
+        if dialog.show():
+            self.refresh_instruments()
+            self._update_button_states()
+            messagebox.showinfo("成功", "校准排程处理完成", parent=self.parent)
+
+    def _on_undo_calibration(self):
+        can_undo, item = self.service.can_undo_last_calibration_schedule()
+        if not can_undo or not item:
+            messagebox.showinfo("提示", "没有可撤销的校准处理", parent=self.parent)
+            return
+        
+        user = self.service.get_current_user()
+        if not user.can_calibrate():
+            messagebox.showerror("权限不足", "您没有撤销校准的权限", parent=self.parent)
+            return
+        
+        confirm = messagebox.askyesno(
+            "确认撤销",
+            f"确定要撤销仪器 \"{item.instrument_name}\" 的校准处理吗？\n"
+            f"校准日期: {item.actual_calibration_date.isoformat() if item.actual_calibration_date else 'N/A'}",
+            parent=self.parent
+        )
+        if not confirm:
+            return
+        
+        success, message, _ = self.service.undo_last_calibration_completion()
+        if success:
+            self.refresh_instruments()
+            self._update_button_states()
+            messagebox.showinfo("成功", message, parent=self.parent)
+        else:
+            messagebox.showerror("撤销失败", message, parent=self.parent)
+
+    def _on_calibration_schedule_history(self):
+        from .dialogs import CalibrationScheduleHistoryDialog
+        user = self.service.get_current_user()
+        is_admin = user.can_calibrate()
+        dialog = CalibrationScheduleHistoryDialog(self.parent, self.service, is_admin=is_admin)
+        dialog.show()

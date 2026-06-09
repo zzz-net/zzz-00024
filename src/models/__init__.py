@@ -9,6 +9,12 @@ from .inventory_check import (
     InventoryCheck, InventoryCheckStatus,
     InventoryCheckConflict, ConflictType, ConflictResolution,
 )
+from .calibration_schedule import (
+    CalibrationSchedule, CalibrationScheduleStatus,
+    CalibrationScheduleItem, CalibrationScheduleItemStatus,
+    CalibrationScheduleConflict, CalibrationConflictType,
+    CalibrationConflictResolution,
+)
 
 __all__ = [
     'Instrument',
@@ -29,4 +35,11 @@ __all__ = [
     'InventoryCheckConflict',
     'ConflictType',
     'ConflictResolution',
+    'CalibrationSchedule',
+    'CalibrationScheduleStatus',
+    'CalibrationScheduleItem',
+    'CalibrationScheduleItemStatus',
+    'CalibrationScheduleConflict',
+    'CalibrationConflictType',
+    'CalibrationConflictResolution',
 ]

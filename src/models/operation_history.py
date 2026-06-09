@@ -15,6 +15,9 @@ class OperationType(str, Enum):
     UNFREEZE = "解冻"
     MAINTENANCE_START = "开始维修"
     MAINTENANCE_END = "维修完成"
+    CALIBRATION_SCHEDULE_IMPORT = "校准排程导入"
+    CALIBRATION_SCHEDULE_COMPLETE = "校准排程完成"
+    CALIBRATION_SCHEDULE_UNDO = "校准排程撤销"
 
 
 @dataclass

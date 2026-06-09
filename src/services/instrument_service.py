@@ -14,6 +14,10 @@ from ..models import (
     Reservation, ReservationStatus,
     InventoryCheck, InventoryCheckStatus,
     InventoryCheckConflict, ConflictType, ConflictResolution,
+    CalibrationSchedule, CalibrationScheduleStatus,
+    CalibrationScheduleItem, CalibrationScheduleItemStatus,
+    CalibrationScheduleConflict, CalibrationConflictType,
+    CalibrationConflictResolution,
 )
 from ..storage import DataManager
 
@@ -953,3 +957,601 @@ class InstrumentService:
         checks = self.data_manager.get_inventory_checks()
         undoable = [c for c in checks if c.can_undo]
         return (True, undoable[0]) if undoable else (False, None)
+
+    def parse_calibration_schedule_file(self, filepath: str
+                                        ) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        if not os.path.exists(filepath):
+            return False, f"文件不存在: {filepath}", []
+
+        ext = os.path.splitext(filepath)[1].lower()
+
+        try:
+            if ext == '.csv':
+                return self._parse_calibration_csv_file(filepath)
+            elif ext == '.json':
+                return self._parse_calibration_json_file(filepath)
+            else:
+                return False, f"不支持的文件格式: {ext}，请使用 CSV 或 JSON", []
+        except Exception as e:
+            return False, f"解析文件失败: {str(e)}", []
+
+    def _parse_calibration_csv_file(self, filepath: str
+                                     ) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        items = []
+        required_fields = {'serial_number', 'planned_date'}
+
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+
+            if not reader.fieldnames:
+                return False, "CSV 文件为空", []
+
+            csv_fields = {f.lower().strip() for f in reader.fieldnames}
+            missing = required_fields - csv_fields
+            if missing:
+                return False, f"缺少必填字段: {', '.join(missing)}", []
+
+            field_map = {f.lower().strip(): f for f in reader.fieldnames}
+
+            for row_num, row in enumerate(reader, start=2):
+                try:
+                    item = {
+                        'serial_number': row[field_map['serial_number']].strip(),
+                        'planned_date': row[field_map['planned_date']].strip(),
+                        'calibration_agency': row.get(field_map.get('calibration_agency', ''), '').strip()
+                        if field_map.get('calibration_agency') else '',
+                        'certificate_number': row.get(field_map.get('certificate_number', ''), '').strip()
+                        if field_map.get('certificate_number') else '',
+                        'notes': row.get(field_map.get('notes', ''), '').strip()
+                        if field_map.get('notes') else '',
+                    }
+                    if not item['serial_number']:
+                        continue
+                    items.append(item)
+                except Exception as e:
+                    return False, f"第 {row_num} 行解析失败: {str(e)}", []
+
+        return True, f"成功解析 {len(items)} 条记录", items
+
+    def _parse_calibration_json_file(self, filepath: str
+                                      ) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        if isinstance(data, dict) and 'items' in data:
+            items = data['items']
+        elif isinstance(data, list):
+            items = data
+        else:
+            return False, "JSON 格式不正确，应为数组或包含 items 字段的对象", []
+
+        required_fields = {'serial_number', 'planned_date'}
+        parsed_items = []
+
+        for i, item in enumerate(items):
+            missing = required_fields - set(item.keys())
+            if missing:
+                return False, f"第 {i+1} 条记录缺少字段: {', '.join(missing)}", []
+
+            parsed_items.append({
+                'serial_number': str(item.get('serial_number', '')).strip(),
+                'planned_date': str(item.get('planned_date', '')).strip(),
+                'calibration_agency': str(item.get('calibration_agency', '')).strip(),
+                'certificate_number': str(item.get('certificate_number', '')).strip(),
+                'notes': str(item.get('notes', '')).strip(),
+            })
+
+        return True, f"成功解析 {len(parsed_items)} 条记录", parsed_items
+
+    def create_calibration_schedule(self, name: str, plan_date: Optional[date] = None,
+                                    notes: str = ""
+                                    ) -> Tuple[bool, str, Optional[CalibrationSchedule]]:
+        user = self.get_current_user()
+
+        if not user.can_calibrate():
+            return False, "您没有创建校准排程的权限", None
+
+        if not name.strip():
+            return False, "请输入排程名称", None
+
+        plan_date = plan_date or date.today()
+
+        schedule = CalibrationSchedule.create(
+            name=name.strip(),
+            creator=user.display_name,
+            plan_date=plan_date,
+            notes=notes.strip()
+        )
+
+        self.data_manager.add_calibration_schedule(schedule)
+        return True, "校准排程创建成功", schedule
+
+    def detect_calibration_conflicts(self, schedule_id: str, import_items: List[Dict[str, Any]]
+                                      ) -> Tuple[bool, str, List[CalibrationScheduleConflict]]:
+        user = self.get_current_user()
+        if not user.can_calibrate():
+            return False, "您没有检测校准冲突的权限", []
+
+        schedule = self.data_manager.get_calibration_schedule_by_id(schedule_id)
+        if not schedule:
+            return False, "校准排程不存在", []
+
+        schedule.mark_processing()
+        schedule.total_items = len(import_items)
+        self.data_manager.update_calibration_schedule(schedule)
+
+        instruments = self.get_instruments()
+        instr_by_serial = {instr.serial_number: instr for instr in instruments}
+
+        existing_calibrations = self.get_calibration_records()
+        existing_certificates = {c.certificate_number for c in existing_calibrations if c.certificate_number}
+
+        schedule_items = self.data_manager.get_calibration_schedule_items()
+        schedule_certificates = {i.certificate_number for i in schedule_items if i.certificate_number}
+
+        conflicts = []
+        seen_serials = set()
+        seen_certificates = set()
+        valid_items = []
+
+        for item in import_items:
+            serial = item['serial_number']
+
+            if serial in seen_serials:
+                conflict = CalibrationScheduleConflict.create(
+                    schedule_id=schedule_id,
+                    conflict_type=CalibrationConflictType.DUPLICATE_SERIAL,
+                    serial_number=serial,
+                    expected_value="唯一序列号",
+                    actual_value=serial,
+                    notes="导入文件中序列号重复",
+                    row_data=item
+                )
+                conflicts.append(conflict)
+                continue
+
+            seen_serials.add(serial)
+
+            if not item.get('planned_date'):
+                conflict = CalibrationScheduleConflict.create(
+                    schedule_id=schedule_id,
+                    conflict_type=CalibrationConflictType.MISSING_DATE,
+                    serial_number=serial,
+                    expected_value="校准计划日期",
+                    actual_value="空",
+                    instrument_id=instr_by_serial[serial].id if serial in instr_by_serial else None,
+                    instrument_name=instr_by_serial[serial].name if serial in instr_by_serial else "",
+                    notes="缺少计划校准日期",
+                    row_data=item
+                )
+                conflicts.append(conflict)
+                continue
+
+            try:
+                pd = item['planned_date']
+                if isinstance(pd, date):
+                    planned_date = pd
+                else:
+                    planned_date = date.fromisoformat(str(pd))
+            except ValueError:
+                conflict = CalibrationScheduleConflict.create(
+                    schedule_id=schedule_id,
+                    conflict_type=CalibrationConflictType.INVALID_DATE,
+                    serial_number=serial,
+                    expected_value="YYYY-MM-DD 格式",
+                    actual_value=item['planned_date'],
+                    instrument_id=instr_by_serial[serial].id if serial in instr_by_serial else None,
+                    instrument_name=instr_by_serial[serial].name if serial in instr_by_serial else "",
+                    notes="日期格式不正确",
+                    row_data=item
+                )
+                conflicts.append(conflict)
+                continue
+
+            if serial not in instr_by_serial:
+                conflict = CalibrationScheduleConflict.create(
+                    schedule_id=schedule_id,
+                    conflict_type=CalibrationConflictType.INSTRUMENT_NOT_FOUND,
+                    serial_number=serial,
+                    expected_value="系统中存在",
+                    actual_value="不存在",
+                    instrument_name="未知仪器",
+                    notes=f"仪器序列号 {serial} 在系统中不存在",
+                    row_data=item
+                )
+                conflicts.append(conflict)
+                continue
+
+            instr = instr_by_serial[serial]
+
+            if instr.status == InstrumentStatus.BORROWED:
+                conflict = CalibrationScheduleConflict.create(
+                    schedule_id=schedule_id,
+                    conflict_type=CalibrationConflictType.BORROWED_CONFLICT,
+                    serial_number=serial,
+                    expected_value="在库可用",
+                    actual_value="已借出",
+                    instrument_id=instr.id,
+                    instrument_name=instr.name,
+                    notes="仪器当前处于借出状态，无法安排校准",
+                    row_data=item
+                )
+                conflicts.append(conflict)
+                continue
+
+            if instr.status == InstrumentStatus.FROZEN:
+                conflict = CalibrationScheduleConflict.create(
+                    schedule_id=schedule_id,
+                    conflict_type=CalibrationConflictType.FROZEN_CONFLICT,
+                    serial_number=serial,
+                    expected_value="在库可用",
+                    actual_value="已冻结",
+                    instrument_id=instr.id,
+                    instrument_name=instr.name,
+                    notes="仪器当前处于冻结状态，无法安排校准",
+                    row_data=item
+                )
+                conflicts.append(conflict)
+                continue
+
+            cert_number = item.get('certificate_number', '').strip()
+            if cert_number:
+                if cert_number in existing_certificates or cert_number in schedule_certificates or cert_number in seen_certificates:
+                    conflict = CalibrationScheduleConflict.create(
+                        schedule_id=schedule_id,
+                        conflict_type=CalibrationConflictType.DUPLICATE_CERTIFICATE,
+                        serial_number=serial,
+                        expected_value="唯一证书编号",
+                        actual_value=cert_number,
+                        instrument_id=instr.id,
+                        instrument_name=instr.name,
+                        notes=f"证书编号 {cert_number} 已存在",
+                        row_data=item
+                    )
+                    conflicts.append(conflict)
+                    continue
+                seen_certificates.add(cert_number)
+
+            valid_items.append({
+                'instrument': instr,
+                'planned_date': planned_date,
+                'calibration_agency': item.get('calibration_agency', ''),
+                'certificate_number': cert_number,
+                'notes': item.get('notes', ''),
+                'row_data': item,
+            })
+
+        schedule_items_objs = []
+        for item in valid_items:
+            instr = item['instrument']
+            schedule_item = CalibrationScheduleItem.create(
+                schedule_id=schedule_id,
+                instrument_id=instr.id,
+                serial_number=instr.serial_number,
+                instrument_name=instr.name,
+                planned_date=item['planned_date'],
+                calibration_agency=item['calibration_agency'],
+                certificate_number=item['certificate_number'],
+                notes=item['notes'],
+            )
+            if schedule_item.is_overdue():
+                schedule_item.mark_overdue()
+            schedule_items_objs.append(schedule_item)
+
+        if schedule_items_objs:
+            self.data_manager.add_calibration_schedule_items_batch(schedule_items_objs)
+
+        schedule.conflict_count = len(conflicts)
+        self.data_manager.update_calibration_schedule(schedule)
+
+        if conflicts:
+            self.data_manager.add_calibration_schedule_conflicts_batch(conflicts)
+
+        history = OperationHistory.create(
+            instrument_id="",
+            operation_type=OperationType.CALIBRATION_SCHEDULE_IMPORT,
+            operator=user.display_name,
+            details=f"导入校准排程: {schedule.name}, 共 {len(import_items)} 条, 冲突 {len(conflicts)} 条",
+            related_record_id=schedule.id,
+        )
+        self.data_manager.add_operation_history(history)
+
+        return True, f"检测完成：成功导入 {len(valid_items)} 条，冲突 {len(conflicts)} 条", conflicts
+
+    def resolve_calibration_conflict(self, conflict_id: str,
+                                     resolution: CalibrationConflictResolution,
+                                     notes: str = ""
+                                     ) -> Tuple[bool, str, Optional[CalibrationScheduleConflict]]:
+        user = self.get_current_user()
+        if not user.can_calibrate():
+            return False, "您没有处理校准冲突的权限", None
+
+        conflict = self.data_manager.get_calibration_schedule_conflict_by_id(conflict_id)
+        if not conflict:
+            return False, "冲突记录不存在", None
+
+        conflict.resolve(resolution, user.display_name, notes)
+        self.data_manager.update_calibration_schedule_conflict(conflict)
+
+        if resolution == CalibrationConflictResolution.CONFIRM and conflict.row_data:
+            instruments = self.get_instruments()
+            instr_by_serial = {instr.serial_number: instr for instr in instruments}
+
+            row_data = conflict.row_data
+            serial = row_data.get('serial_number', '')
+
+            if conflict.conflict_type in [CalibrationConflictType.INSTRUMENT_NOT_FOUND,
+                                           CalibrationConflictType.BORROWED_CONFLICT,
+                                           CalibrationConflictType.FROZEN_CONFLICT]:
+                pass
+            else:
+                try:
+                    planned_date = date.fromisoformat(row_data['planned_date'])
+                except (ValueError, KeyError):
+                    planned_date = date.today()
+
+                instr = instr_by_serial.get(serial)
+                if instr:
+                    schedule_item = CalibrationScheduleItem.create(
+                        schedule_id=conflict.schedule_id,
+                        instrument_id=instr.id,
+                        serial_number=instr.serial_number,
+                        instrument_name=instr.name,
+                        planned_date=planned_date,
+                        calibration_agency=row_data.get('calibration_agency', ''),
+                        certificate_number=row_data.get('certificate_number', ''),
+                        notes=row_data.get('notes', ''),
+                    )
+                    if schedule_item.is_overdue():
+                        schedule_item.mark_overdue()
+                    self.data_manager.add_calibration_schedule_item(schedule_item)
+
+        all_conflicts = self.data_manager.get_calibration_schedule_conflicts(
+            conflict.schedule_id
+        )
+        pending = [c for c in all_conflicts if c.resolution == CalibrationConflictResolution.PENDING]
+
+        if not pending:
+            schedule = self.data_manager.get_calibration_schedule_by_id(conflict.schedule_id)
+            if schedule and schedule.status == CalibrationScheduleStatus.PROCESSING:
+                self.mark_calibration_schedule_import_completed(schedule.id)
+
+        return True, f"冲突已标记为{resolution.value}", conflict
+
+    def resolve_all_calibration_conflicts(self, schedule_id: str,
+                                          resolution: CalibrationConflictResolution
+                                          ) -> Tuple[bool, str, int]:
+        user = self.get_current_user()
+        if not user.can_calibrate():
+            return False, "您没有处理校准冲突的权限", 0
+
+        conflicts = self.data_manager.get_calibration_schedule_conflicts(schedule_id)
+        pending = [c for c in conflicts if c.resolution == CalibrationConflictResolution.PENDING]
+
+        count = 0
+        for conflict in pending:
+            success, _, _ = self.resolve_calibration_conflict(conflict.id, resolution)
+            if success:
+                count += 1
+
+        schedule = self.data_manager.get_calibration_schedule_by_id(schedule_id)
+        if schedule and schedule.status == CalibrationScheduleStatus.PROCESSING:
+            all_conflicts = self.data_manager.get_calibration_schedule_conflicts(schedule_id)
+            still_pending = [c for c in all_conflicts if c.resolution == CalibrationConflictResolution.PENDING]
+            if not still_pending:
+                self.mark_calibration_schedule_import_completed(schedule_id)
+
+        return True, f"批量处理完成，共处理 {count} 条冲突", count
+
+    def mark_calibration_schedule_import_completed(self, schedule_id: str
+                                                    ) -> Tuple[bool, str, Optional[CalibrationSchedule]]:
+        schedule = self.data_manager.get_calibration_schedule_by_id(schedule_id)
+        if not schedule:
+            return False, "校准排程不存在", None
+
+        schedule.mark_completed()
+        self.data_manager.update_calibration_schedule(schedule)
+
+        return True, "校准排程导入完成", schedule
+
+    def complete_calibration_schedule_item(self, item_id: str,
+                                            calibration_date: date,
+                                            next_calibration_date: date,
+                                            certificate_number: str,
+                                            calibration_agency: str,
+                                            result: str = "合格",
+                                            notes: str = ""
+                                            ) -> Tuple[bool, str, Optional[CalibrationScheduleItem]]:
+        user = self.get_current_user()
+        if not user.can_calibrate():
+            return False, "您没有完成校准的权限", None
+
+        item = self.data_manager.get_calibration_schedule_item_by_id(item_id)
+        if not item:
+            return False, "校准排程项不存在", None
+
+        if item.status == CalibrationScheduleItemStatus.COMPLETED:
+            return False, "该排程项已完成校准", None
+
+        if next_calibration_date <= calibration_date:
+            return False, "下次校准日期必须晚于本次校准日期", None
+
+        item.mark_completed(
+            calibration_date=calibration_date,
+            next_calibration_date=next_calibration_date,
+            certificate_number=certificate_number,
+            result=result,
+            processed_by=user.display_name,
+            notes=notes
+        )
+
+        self.data_manager.update_calibration_schedule_item(item)
+
+        existing_certs = self.get_calibration_records()
+        for cert in existing_certs:
+            if cert.certificate_number == certificate_number and cert.instrument_id != item.instrument_id:
+                pass
+
+        calibration_record = CalibrationRecord.create(
+            instrument_id=item.instrument_id,
+            calibration_date=calibration_date,
+            next_calibration_date=next_calibration_date,
+            certificate_number=certificate_number,
+            calibration_agency=calibration_agency,
+            result=result,
+            notes=notes,
+        )
+        self.data_manager.add_calibration_record(calibration_record)
+
+        instrument = self.get_instrument_by_id(item.instrument_id)
+        if instrument:
+            old_status = instrument.status
+            old_cal_date = instrument.calibration_due_date
+            instrument.calibration_due_date = next_calibration_date
+
+            if instrument.is_calibration_expired():
+                instrument.status = InstrumentStatus.CALIBRATION_EXPIRED
+            elif instrument.is_calibration_due_soon(30):
+                instrument.status = InstrumentStatus.CALIBRATION_DUE
+            else:
+                instrument.status = InstrumentStatus.AVAILABLE
+
+            self.data_manager.update_instrument(instrument)
+
+            if not item.undo_snapshot:
+                item.undo_snapshot = {
+                    'old_status': old_status.value,
+                    'old_calibration_due_date': old_cal_date.isoformat() if old_cal_date else None,
+                    'calibration_record_id': calibration_record.id,
+                }
+                self.data_manager.update_calibration_schedule_item(item)
+
+        schedule = self.data_manager.get_calibration_schedule_by_id(item.schedule_id)
+        if schedule:
+            schedule.can_undo = True
+            if not schedule.undo_snapshot:
+                schedule.undo_snapshot = {'items': []}
+            if 'items' not in schedule.undo_snapshot:
+                schedule.undo_snapshot['items'] = []
+            schedule.undo_snapshot['items'].append({
+                'item_id': item.id,
+                'instrument_id': item.instrument_id,
+                'old_status': old_status.value,
+                'old_calibration_due_date': old_cal_date.isoformat() if old_cal_date else None,
+                'calibration_record_id': calibration_record.id,
+            })
+            self.data_manager.update_calibration_schedule(schedule)
+
+        history = OperationHistory.create(
+            instrument_id=item.instrument_id,
+            operation_type=OperationType.CALIBRATION,
+            operator=user.display_name,
+            details=f"排程校准完成, 证书编号: {certificate_number}, 机构: {calibration_agency}, 结果: {result}",
+            related_record_id=item.schedule_id,
+        )
+        self.data_manager.add_operation_history(history)
+
+        schedule_items = self.data_manager.get_calibration_schedule_items(item.schedule_id)
+        schedule.refresh_status(schedule_items)
+        self.data_manager.update_calibration_schedule(schedule)
+
+        return True, "校准完成，仪器状态已更新", item
+
+    def undo_last_calibration_completion(self) -> Tuple[bool, str, Optional[CalibrationScheduleItem]]:
+        user = self.get_current_user()
+        if not user.can_calibrate():
+            return False, "您没有撤销校准的权限", None
+
+        can_undo, item = self.data_manager.can_undo_last_calibration_schedule()
+        if not can_undo or not item:
+            return False, "没有可撤销的校准处理", None
+
+        if not item.undo_snapshot:
+            return False, "撤销数据已损坏", None
+
+        undo_data = item.undo_snapshot
+        instrument = self.get_instrument_by_id(item.instrument_id)
+        if not instrument:
+            return False, "关联仪器不存在", None
+
+        old_status = InstrumentStatus(undo_data['old_status'])
+        old_cal_date = date.fromisoformat(undo_data['old_calibration_due_date']) if undo_data.get('old_calibration_due_date') else None
+
+        instrument.calibration_due_date = old_cal_date
+        instrument.status = old_status
+        self.data_manager.update_instrument(instrument)
+
+        item.status = CalibrationScheduleItemStatus.SCHEDULED
+        item.actual_calibration_date = None
+        item.next_calibration_date = None
+        item.certificate_number = ""
+        item.result = ""
+        item.processed_by = None
+        item.processed_at = None
+        item.undo_snapshot = None
+        self.data_manager.update_calibration_schedule_item(item)
+
+        schedule = self.data_manager.get_calibration_schedule_by_id(item.schedule_id)
+        if schedule and schedule.undo_snapshot and 'items' in schedule.undo_snapshot:
+            schedule.undo_snapshot['items'] = [
+                i for i in schedule.undo_snapshot['items']
+                if i.get('item_id') != item.id
+            ]
+            if not schedule.undo_snapshot['items']:
+                schedule.can_undo = False
+                schedule.undo_snapshot = {'items': []}
+            self.data_manager.update_calibration_schedule(schedule)
+
+        history = OperationHistory.create(
+            instrument_id=instrument.id,
+            operation_type=OperationType.CALIBRATION_SCHEDULE_UNDO,
+            operator=user.display_name,
+            details=f"撤销排程校准: 恢复状态为 {old_status.value}",
+            related_record_id=item.schedule_id,
+        )
+        self.data_manager.add_operation_history(history)
+
+        return True, "已撤销最近一次校准处理", item
+
+    def get_calibration_schedules(self) -> List[CalibrationSchedule]:
+        self.data_manager.refresh_calibration_schedule_statuses()
+        return self.data_manager.get_calibration_schedules()
+
+    def get_calibration_schedule_by_id(self, schedule_id: str) -> Optional[CalibrationSchedule]:
+        return self.data_manager.get_calibration_schedule_by_id(schedule_id)
+
+    def get_calibration_schedule_items(self, schedule_id: Optional[str] = None,
+                                        instrument_id: Optional[str] = None) -> List[CalibrationScheduleItem]:
+        return self.data_manager.get_calibration_schedule_items(schedule_id, instrument_id)
+
+    def get_calibration_schedule_conflicts(self, schedule_id: Optional[str] = None
+                                            ) -> List[CalibrationScheduleConflict]:
+        return self.data_manager.get_calibration_schedule_conflicts(schedule_id)
+
+    def can_undo_last_calibration_schedule(self) -> Tuple[bool, Optional[CalibrationScheduleItem]]:
+        return self.data_manager.can_undo_last_calibration_schedule()
+
+    def get_overdue_calibration_items(self) -> List[CalibrationScheduleItem]:
+        self.data_manager.refresh_calibration_schedule_statuses()
+        all_items = self.data_manager.get_calibration_schedule_items()
+        return [i for i in all_items if i.status == CalibrationScheduleItemStatus.OVERDUE]
+
+    def get_upcoming_calibration_items(self, days: int = 30) -> List[CalibrationScheduleItem]:
+        self.data_manager.refresh_calibration_schedule_statuses()
+        all_items = self.data_manager.get_calibration_schedule_items()
+        today = date.today()
+        end_date = today + timedelta(days=days)
+        return [
+            i for i in all_items
+            if i.status in [CalibrationScheduleItemStatus.SCHEDULED, CalibrationScheduleItemStatus.OVERDUE]
+            and today <= i.planned_date <= end_date
+        ]
+
+    def refresh_calibration_statuses(self) -> None:
+        self.data_manager.refresh_calibration_schedule_statuses()
+
+    def refresh_calibration_schedule_statuses(self) -> None:
+        self.data_manager.refresh_calibration_schedule_statuses()
+
+    def get_calibration_schedule_item_by_id(self, item_id: str) -> Optional[CalibrationScheduleItem]:
+        return self.data_manager.get_calibration_schedule_item_by_id(item_id)

@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import date, datetime
 
 from ..models import (
@@ -13,6 +13,9 @@ from ..models import (
     Reservation,
     InventoryCheck, InventoryCheckStatus,
     InventoryCheckConflict, ConflictType, ConflictResolution,
+    CalibrationSchedule, CalibrationScheduleStatus,
+    CalibrationScheduleItem, CalibrationScheduleItemStatus,
+    CalibrationScheduleConflict, CalibrationConflictType, CalibrationConflictResolution,
 )
 
 
@@ -54,6 +57,9 @@ class DataManager:
             'reservations': [],
             'inventory_checks': [],
             'inventory_check_conflicts': [],
+            'calibration_schedules': [],
+            'calibration_schedule_items': [],
+            'calibration_schedule_conflicts': [],
             'current_user': User.create_normal_user('user', '普通用户').to_dict(),
             'settings': {
                 'export_dir': os.path.join(os.path.expanduser('~'), 'Documents', 'LabExports'),
@@ -112,6 +118,21 @@ class DataManager:
                 InventoryCheckConflict.from_dict(item) for item in data['inventory_check_conflicts']
             ]
         
+        if 'calibration_schedules' in data:
+            result['calibration_schedules'] = [
+                CalibrationSchedule.from_dict(item) for item in data['calibration_schedules']
+            ]
+        
+        if 'calibration_schedule_items' in data:
+            result['calibration_schedule_items'] = [
+                CalibrationScheduleItem.from_dict(item) for item in data['calibration_schedule_items']
+            ]
+        
+        if 'calibration_schedule_conflicts' in data:
+            result['calibration_schedule_conflicts'] = [
+                CalibrationScheduleConflict.from_dict(item) for item in data['calibration_schedule_conflicts']
+            ]
+        
         if 'current_user' in data:
             result['current_user'] = data['current_user']
         
@@ -130,6 +151,9 @@ class DataManager:
             'reservations': [item.to_dict() for item in data['reservations']],
             'inventory_checks': [item.to_dict() for item in data['inventory_checks']],
             'inventory_check_conflicts': [item.to_dict() for item in data['inventory_check_conflicts']],
+            'calibration_schedules': [item.to_dict() for item in data['calibration_schedules']],
+            'calibration_schedule_items': [item.to_dict() for item in data['calibration_schedule_items']],
+            'calibration_schedule_conflicts': [item.to_dict() for item in data['calibration_schedule_conflicts']],
             'current_user': data['current_user'],
             'settings': data['settings'],
             'metadata': {
@@ -369,3 +393,102 @@ class DataManager:
     def add_conflicts_batch(self, conflicts: List[InventoryCheckConflict]) -> None:
         self._data['inventory_check_conflicts'].extend(conflicts)
         self.save()
+
+    def get_calibration_schedules(self) -> List[CalibrationSchedule]:
+        return sorted(self._data['calibration_schedules'], key=lambda c: c.created_at, reverse=True)
+
+    def get_calibration_schedule_by_id(self, schedule_id: str) -> Optional[CalibrationSchedule]:
+        for c in self._data['calibration_schedules']:
+            if c.id == schedule_id:
+                return c
+        return None
+
+    def get_latest_calibration_schedule(self) -> Optional[CalibrationSchedule]:
+        schedules = self.get_calibration_schedules()
+        return schedules[0] if schedules else None
+
+    def add_calibration_schedule(self, schedule: CalibrationSchedule) -> None:
+        self._data['calibration_schedules'].append(schedule)
+        self.save()
+
+    def update_calibration_schedule(self, schedule: CalibrationSchedule) -> None:
+        for i, existing in enumerate(self._data['calibration_schedules']):
+            if existing.id == schedule.id:
+                self._data['calibration_schedules'][i] = schedule
+                self.save()
+                return
+        raise ValueError(f"CalibrationSchedule with id {schedule.id} not found")
+
+    def get_calibration_schedule_items(self, schedule_id: Optional[str] = None,
+                                        instrument_id: Optional[str] = None) -> List[CalibrationScheduleItem]:
+        items = self._data['calibration_schedule_items']
+        if schedule_id:
+            items = [i for i in items if i.schedule_id == schedule_id]
+        if instrument_id:
+            items = [i for i in items if i.instrument_id == instrument_id]
+        return sorted(items, key=lambda i: i.planned_date)
+
+    def get_calibration_schedule_item_by_id(self, item_id: str) -> Optional[CalibrationScheduleItem]:
+        for i in self._data['calibration_schedule_items']:
+            if i.id == item_id:
+                return i
+        return None
+
+    def add_calibration_schedule_item(self, item: CalibrationScheduleItem) -> None:
+        self._data['calibration_schedule_items'].append(item)
+        self.save()
+
+    def update_calibration_schedule_item(self, item: CalibrationScheduleItem) -> None:
+        for i, existing in enumerate(self._data['calibration_schedule_items']):
+            if existing.id == item.id:
+                item.updated_at = datetime.now()
+                self._data['calibration_schedule_items'][i] = item
+                self.save()
+                return
+        raise ValueError(f"CalibrationScheduleItem with id {item.id} not found")
+
+    def add_calibration_schedule_items_batch(self, items: List[CalibrationScheduleItem]) -> None:
+        self._data['calibration_schedule_items'].extend(items)
+        self.save()
+
+    def get_calibration_schedule_conflicts(self, schedule_id: Optional[str] = None) -> List[CalibrationScheduleConflict]:
+        conflicts = self._data['calibration_schedule_conflicts']
+        if schedule_id:
+            conflicts = [c for c in conflicts if c.schedule_id == schedule_id]
+        return sorted(conflicts, key=lambda c: c.created_at)
+
+    def get_calibration_schedule_conflict_by_id(self, conflict_id: str) -> Optional[CalibrationScheduleConflict]:
+        for c in self._data['calibration_schedule_conflicts']:
+            if c.id == conflict_id:
+                return c
+        return None
+
+    def add_calibration_schedule_conflict(self, conflict: CalibrationScheduleConflict) -> None:
+        self._data['calibration_schedule_conflicts'].append(conflict)
+        self.save()
+
+    def update_calibration_schedule_conflict(self, conflict: CalibrationScheduleConflict) -> None:
+        for i, existing in enumerate(self._data['calibration_schedule_conflicts']):
+            if existing.id == conflict.id:
+                self._data['calibration_schedule_conflicts'][i] = conflict
+                self.save()
+                return
+        raise ValueError(f"CalibrationScheduleConflict with id {conflict.id} not found")
+
+    def add_calibration_schedule_conflicts_batch(self, conflicts: List[CalibrationScheduleConflict]) -> None:
+        self._data['calibration_schedule_conflicts'].extend(conflicts)
+        self.save()
+
+    def refresh_calibration_schedule_statuses(self) -> None:
+        for schedule in self._data['calibration_schedules']:
+            if schedule.status in [CalibrationScheduleStatus.COMPLETED, CalibrationScheduleStatus.CANCELLED]:
+                continue
+            items = self.get_calibration_schedule_items(schedule.id)
+            schedule.refresh_status(items)
+            self.save()
+
+    def can_undo_last_calibration_schedule(self) -> Tuple[bool, Optional[CalibrationScheduleItem]]:
+        items = self.get_calibration_schedule_items()
+        undoable = [item for item in items if item.undo_snapshot is not None]
+        undoable.sort(key=lambda x: x.processed_at or datetime.min, reverse=True)
+        return (True, undoable[0]) if undoable else (False, None)

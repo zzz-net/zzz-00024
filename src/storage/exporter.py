@@ -13,6 +13,10 @@ from ..models import (
     Reservation, ReservationStatus,
     InventoryCheck, InventoryCheckStatus,
     InventoryCheckConflict, ConflictType, ConflictResolution,
+    CalibrationSchedule, CalibrationScheduleStatus,
+    CalibrationScheduleItem, CalibrationScheduleItemStatus,
+    CalibrationScheduleConflict, CalibrationConflictType,
+    CalibrationConflictResolution,
 )
 
 
@@ -415,6 +419,240 @@ class DataExporter:
                     check.notes,
                 ])
         
+        return filepath
+
+    @staticmethod
+    def export_calibration_schedules_summary_to_json(schedules: List[CalibrationSchedule],
+                                                      filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+
+        data = [schedule.to_dict() for schedule in schedules]
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=DataExporter._default_serializer)
+
+        return filepath
+
+    @staticmethod
+    def export_calibration_schedules_summary_to_csv(schedules: List[CalibrationSchedule],
+                                                     filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+
+        headers = [
+            '排程名称', '创建人', '计划日期', '总条目', '已完成', '冲突数',
+            '状态', '可撤销', '创建时间', '完成时间', '备注'
+        ]
+
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+
+            for schedule in schedules:
+                writer.writerow([
+                    schedule.name,
+                    schedule.creator,
+                    schedule.plan_date.isoformat(),
+                    schedule.total_items,
+                    schedule.completed_count,
+                    schedule.conflict_count,
+                    schedule.status.value,
+                    '是' if schedule.can_undo else '否',
+                    schedule.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                    schedule.completed_at.strftime('%Y-%m-%d %H:%M:%S') if schedule.completed_at else '',
+                    schedule.notes,
+                ])
+
+        return filepath
+
+    @staticmethod
+    def export_calibration_schedule_items_to_json(items: List[CalibrationScheduleItem],
+                                                   filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+
+        data = [item.to_dict() for item in items]
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=DataExporter._default_serializer)
+
+        return filepath
+
+    @staticmethod
+    def export_calibration_schedule_items_to_csv(items: List[CalibrationScheduleItem],
+                                                  filepath: str,
+                                                  instruments: Optional[List[Instrument]] = None) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+
+        instr_map = {i.id: i for i in instruments} if instruments else {}
+
+        headers = [
+            'ID', '排程ID', '仪器ID', '仪器名称', '序列号', '计划校准日期',
+            '校准机构', '证书编号', '实际校准日期', '下次校准日期',
+            '结果', '状态', '处理人', '处理时间', '备注'
+        ]
+
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+
+            for item in items:
+                writer.writerow([
+                    item.id,
+                    item.schedule_id,
+                    item.instrument_id,
+                    item.instrument_name,
+                    item.serial_number,
+                    item.planned_date.isoformat(),
+                    item.calibration_agency,
+                    item.certificate_number,
+                    item.actual_calibration_date.isoformat() if item.actual_calibration_date else '',
+                    item.next_calibration_date.isoformat() if item.next_calibration_date else '',
+                    item.result,
+                    item.status.value,
+                    item.processed_by or '',
+                    item.processed_at.strftime('%Y-%m-%d %H:%M:%S') if item.processed_at else '',
+                    item.notes,
+                ])
+
+        return filepath
+
+    @staticmethod
+    def export_calibration_schedule_conflicts_to_json(conflicts: List[CalibrationScheduleConflict],
+                                                       filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+
+        data = [conflict.to_dict() for conflict in conflicts]
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=DataExporter._default_serializer)
+
+        return filepath
+
+    @staticmethod
+    def export_calibration_schedule_conflicts_to_csv(conflicts: List[CalibrationScheduleConflict],
+                                                      filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+
+        headers = [
+            '冲突类型', '序列号', '仪器名称', '系统值', '实际值',
+            '处理结论', '处理人', '处理时间', '备注'
+        ]
+
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+
+            for c in conflicts:
+                writer.writerow([
+                    c.conflict_type.value,
+                    c.serial_number,
+                    c.instrument_name or '未知',
+                    c.expected_value,
+                    c.actual_value,
+                    c.resolution.value,
+                    c.resolved_by or '',
+                    c.resolved_at.strftime('%Y-%m-%d %H:%M:%S') if c.resolved_at else '',
+                    c.notes,
+                ])
+
+        return filepath
+
+    @staticmethod
+    def export_overdue_calibration_items_to_json(items: List[CalibrationScheduleItem],
+                                                  filepath: str) -> str:
+        return DataExporter.export_calibration_schedule_items_to_json(items, filepath)
+
+    @staticmethod
+    def export_overdue_calibration_items_to_csv(items: List[CalibrationScheduleItem],
+                                                 filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+
+        headers = [
+            '仪器名称', '序列号', '计划校准日期', '逾期天数',
+            '校准机构', '状态', '备注'
+        ]
+
+        today = date.today()
+
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+
+            for item in items:
+                overdue_days = (today - item.planned_date).days if item.planned_date < today else 0
+                writer.writerow([
+                    item.instrument_name,
+                    item.serial_number,
+                    item.planned_date.isoformat(),
+                    overdue_days,
+                    item.calibration_agency,
+                    item.status.value,
+                    item.notes,
+                ])
+
+        return filepath
+
+    @staticmethod
+    def export_calibration_schedule_full_to_csv(schedule: CalibrationSchedule,
+                                                 items: List[CalibrationScheduleItem],
+                                                 conflicts: List[CalibrationScheduleConflict],
+                                                 filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+
+            writer.writerow(['=== 校准排程汇总 ==='])
+            writer.writerow(['排程名称', schedule.name])
+            writer.writerow(['创建人', schedule.creator])
+            writer.writerow(['计划日期', schedule.plan_date.isoformat()])
+            writer.writerow(['总条目数', schedule.total_items])
+            writer.writerow(['已完成数', schedule.completed_count])
+            writer.writerow(['冲突数量', schedule.conflict_count])
+            writer.writerow(['状态', schedule.status.value])
+            writer.writerow(['可撤销', '是' if schedule.can_undo else '否'])
+            writer.writerow(['创建时间', schedule.created_at.strftime('%Y-%m-%d %H:%M:%S')])
+            writer.writerow(['完成时间', schedule.completed_at.strftime('%Y-%m-%d %H:%M:%S') if schedule.completed_at else ''])
+            writer.writerow(['备注', schedule.notes])
+            writer.writerow([])
+
+            writer.writerow(['=== 校准计划明细 ==='])
+            writer.writerow([
+                '仪器名称', '序列号', '计划日期', '校准机构', '证书编号',
+                '实际校准日期', '下次校准日期', '结果', '状态', '处理人'
+            ])
+            for item in items:
+                writer.writerow([
+                    item.instrument_name,
+                    item.serial_number,
+                    item.planned_date.isoformat(),
+                    item.calibration_agency,
+                    item.certificate_number,
+                    item.actual_calibration_date.isoformat() if item.actual_calibration_date else '',
+                    item.next_calibration_date.isoformat() if item.next_calibration_date else '',
+                    item.result,
+                    item.status.value,
+                    item.processed_by or '',
+                ])
+            writer.writerow([])
+
+            writer.writerow(['=== 冲突明细 ==='])
+            writer.writerow([
+                '冲突类型', '序列号', '仪器名称', '系统值', '实际值',
+                '处理结论', '处理人', '处理时间', '备注'
+            ])
+            for c in conflicts:
+                writer.writerow([
+                    c.conflict_type.value,
+                    c.serial_number,
+                    c.instrument_name or '未知',
+                    c.expected_value,
+                    c.actual_value,
+                    c.resolution.value,
+                    c.resolved_by or '',
+                    c.resolved_at.strftime('%Y-%m-%d %H:%M:%S') if c.resolved_at else '',
+                    c.notes,
+                ])
+
         return filepath
 
     @staticmethod

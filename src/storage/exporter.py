@@ -11,6 +11,8 @@ from ..models import (
     CalibrationRecord,
     InventoryItem,
     Reservation, ReservationStatus,
+    InventoryCheck, InventoryCheckStatus,
+    InventoryCheckConflict, ConflictType, ConflictResolution,
 )
 
 
@@ -308,6 +310,109 @@ class DataExporter:
                     r.notes,
                     r.created_at.isoformat(),
                     r.updated_at.isoformat(),
+                ])
+        
+        return filepath
+
+    @staticmethod
+    def export_inventory_check_to_json(check: InventoryCheck,
+                                        conflicts: List[InventoryCheckConflict],
+                                        filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+        
+        data = {
+            'summary': check.to_dict(),
+            'conflicts': [c.to_dict() for c in conflicts],
+        }
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=DataExporter._default_serializer)
+        
+        return filepath
+
+    @staticmethod
+    def export_inventory_check_to_csv(check: InventoryCheck,
+                                       conflicts: List[InventoryCheckConflict],
+                                       filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+        
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            
+            writer.writerow(['=== 盘点汇总 ==='])
+            writer.writerow(['盘点名称', check.name])
+            writer.writerow(['盘点人', check.checker])
+            writer.writerow(['盘点日期', check.check_date.isoformat()])
+            writer.writerow(['总条目数', check.total_items])
+            writer.writerow(['匹配数量', check.matched_count])
+            writer.writerow(['冲突数量', check.conflict_count])
+            writer.writerow(['状态', check.status.value])
+            writer.writerow(['可撤销', '是' if check.can_undo else '否'])
+            writer.writerow(['创建时间', check.created_at.isoformat()])
+            writer.writerow(['完成时间', check.completed_at.isoformat() if check.completed_at else ''])
+            writer.writerow(['备注', check.notes])
+            writer.writerow([])
+            
+            writer.writerow(['=== 冲突明细 ==='])
+            writer.writerow([
+                '冲突类型', '序列号', '仪器名称', '系统值', '盘点值',
+                '处理结论', '处理人', '处理时间', '备注'
+            ])
+            
+            for c in conflicts:
+                writer.writerow([
+                    c.conflict_type.value,
+                    c.serial_number,
+                    c.instrument_name,
+                    c.expected_value,
+                    c.actual_value,
+                    c.resolution.value,
+                    c.resolved_by or '',
+                    c.resolved_at.isoformat() if c.resolved_at else '',
+                    c.notes,
+                ])
+        
+        return filepath
+
+    @staticmethod
+    def export_inventory_checks_summary_to_json(checks: List[InventoryCheck],
+                                                 filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+        
+        data = [check.to_dict() for check in checks]
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, default=DataExporter._default_serializer)
+        
+        return filepath
+
+    @staticmethod
+    def export_inventory_checks_summary_to_csv(checks: List[InventoryCheck],
+                                                filepath: str) -> str:
+        DataExporter._ensure_dir(os.path.dirname(filepath))
+        
+        headers = [
+            '盘点名称', '盘点人', '盘点日期', '总条目数', '匹配数量',
+            '冲突数量', '状态', '可撤销', '创建时间', '完成时间', '备注'
+        ]
+        
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            
+            for check in checks:
+                writer.writerow([
+                    check.name,
+                    check.checker,
+                    check.check_date.isoformat(),
+                    check.total_items,
+                    check.matched_count,
+                    check.conflict_count,
+                    check.status.value,
+                    '是' if check.can_undo else '否',
+                    check.created_at.isoformat(),
+                    check.completed_at.isoformat() if check.completed_at else '',
+                    check.notes,
                 ])
         
         return filepath

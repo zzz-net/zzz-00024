@@ -2,10 +2,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import date, datetime, timedelta
 from typing import Optional, Callable
+import os
 
 from ..models import (
     Instrument, InstrumentStatus, InstrumentCategory,
     User, UserRole,
+    InventoryCheck, InventoryCheckStatus,
+    InventoryCheckConflict, ConflictType, ConflictResolution,
 )
 from ..services import InstrumentService
 
@@ -563,6 +566,7 @@ class ExportDialog(BaseDialog):
         ttk.Radiobutton(type_frame, text="借用记录", variable=self.export_type_var, value="borrows").pack(anchor=tk.W)
         ttk.Radiobutton(type_frame, text="校准记录", variable=self.export_type_var, value="calibrations").pack(anchor=tk.W)
         ttk.Radiobutton(type_frame, text="操作历史", variable=self.export_type_var, value="histories").pack(anchor=tk.W)
+        ttk.Radiobutton(type_frame, text="盘点汇总", variable=self.export_type_var, value="checks_summary").pack(anchor=tk.W)
         ttk.Radiobutton(type_frame, text="全部数据", variable=self.export_type_var, value="all").pack(anchor=tk.W)
         row += 1
         
@@ -584,3 +588,540 @@ class ExportDialog(BaseDialog):
             'format': self.format_var.get(),
         }
         super()._on_ok()
+
+
+class InventoryCheckDialog(BaseDialog):
+    def __init__(self, parent, service: InstrumentService):
+        self.service = service
+        self.name_var = tk.StringVar(value=f"月度盘点-{date.today().strftime('%Y%m')}")
+        self.checker_var = tk.StringVar()
+        self.notes_var = tk.StringVar()
+        self.filepath_var = tk.StringVar()
+        self.check_items = []
+        self.check_record: Optional[InventoryCheck] = None
+        self.conflicts: list[InventoryCheckConflict] = []
+        self.current_conflict_index = 0
+        super().__init__(parent, "批量盘点", "800x600")
+
+    def _create_content(self):
+        notebook = ttk.Notebook(self.main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+        
+        self.import_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.import_frame, text="1. 导入数据")
+        
+        self.conflict_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.conflict_frame, text="2. 处理冲突")
+        notebook.tab(self.conflict_frame, state=tk.DISABLED)
+        
+        self.summary_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(self.summary_frame, text="3. 完成")
+        notebook.tab(self.summary_frame, state=tk.DISABLED)
+        
+        self.notebook = notebook
+        self._create_import_page()
+        self._create_conflict_page()
+        self._create_summary_page()
+
+    def _create_import_page(self):
+        grid = ttk.Frame(self.import_frame)
+        grid.pack(fill=tk.BOTH, expand=True)
+        
+        row = 0
+        ttk.Label(grid, text="盘点名称:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(grid, textvariable=self.name_var, width=50).grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+        row += 1
+        
+        ttk.Label(grid, text="盘点人:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(grid, textvariable=self.checker_var, width=30).grid(row=row, column=1, sticky=tk.W, pady=5, padx=(10, 0))
+        row += 1
+        
+        ttk.Label(grid, text="备注:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(grid, textvariable=self.notes_var, width=50).grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+        row += 1
+        
+        ttk.Label(grid, text="盘点文件:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        file_frame = ttk.Frame(grid)
+        file_frame.grid(row=row, column=1, sticky=tk.EW, pady=5, padx=(10, 0))
+        ttk.Entry(file_frame, textvariable=self.filepath_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(file_frame, text="浏览...", command=self._on_browse_file).pack(side=tk.LEFT, padx=(10, 0))
+        row += 1
+        
+        ttk.Separator(grid, orient=tk.HORIZONTAL).grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=10)
+        row += 1
+        
+        ttk.Label(grid, text="文件格式说明:", font=('bold', 10)).grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        row += 1
+        
+        help_text = "必填字段：序列号(serial_number)、实际位置(actual_location)、盘点人(checker)、盘点时间(check_time)\n可选字段：备注(remarks)\n支持格式：CSV、JSON"
+        help_label = ttk.Label(grid, text=help_text, foreground="gray", justify=tk.LEFT)
+        help_label.grid(row=row, column=0, columnspan=2, sticky=tk.W)
+        row += 1
+        
+        self.import_status_var = tk.StringVar(value="")
+        ttk.Label(grid, textvariable=self.import_status_var, foreground="blue").grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=10)
+        
+        ttk.Button(grid, text="导入并检测", command=self._on_import).grid(row=row+1, column=1, sticky=tk.E)
+        
+        grid.columnconfigure(1, weight=1)
+
+    def _create_conflict_page(self):
+        self.conflict_tree = ttk.Treeview(
+            self.conflict_frame,
+            columns=("type", "serial", "name", "expected", "actual", "resolution"),
+            show="headings"
+        )
+        headings = [
+            ("type", "冲突类型", 120),
+            ("serial", "序列号", 120),
+            ("name", "仪器名称", 150),
+            ("expected", "系统值", 150),
+            ("actual", "盘点值", 150),
+            ("resolution", "处理状态", 100),
+        ]
+        for col, text, width in headings:
+            self.conflict_tree.heading(col, text=text)
+            self.conflict_tree.column(col, width=width, anchor=tk.W)
+        
+        scrollbar = ttk.Scrollbar(self.conflict_frame, orient=tk.VERTICAL, command=self.conflict_tree.yview)
+        self.conflict_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.conflict_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        btn_frame = ttk.Frame(self.conflict_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Button(btn_frame, text="处理选中", command=self._on_resolve_selected).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="全部确认", command=self._on_resolve_all_confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="全部忽略", command=self._on_resolve_all_ignore).pack(side=tk.LEFT, padx=5)
+        
+        self.conflict_stats_var = tk.StringVar(value="")
+        ttk.Label(btn_frame, textvariable=self.conflict_stats_var).pack(side=tk.RIGHT)
+        
+        self.conflict_tree.bind("<Double-1>", lambda e: self._on_resolve_selected())
+
+    def _create_summary_page(self):
+        self.summary_text = tk.Text(self.summary_frame, wrap=tk.WORD, height=20)
+        self.summary_text.pack(fill=tk.BOTH, expand=True)
+
+    def _on_browse_file(self):
+        from tkinter import filedialog
+        filepath = filedialog.askopenfilename(
+            title="选择盘点文件",
+            filetypes=[("CSV文件", "*.csv"), ("JSON文件", "*.json"), ("所有文件", "*.*")],
+            parent=self
+        )
+        if filepath:
+            self.filepath_var.set(filepath)
+
+    def _on_import(self):
+        if not self.name_var.get().strip():
+            messagebox.showerror("错误", "请输入盘点名称", parent=self)
+            return
+        
+        if not self.checker_var.get().strip():
+            messagebox.showerror("错误", "请输入盘点人", parent=self)
+            return
+        
+        filepath = self.filepath_var.get().strip()
+        if not filepath:
+            messagebox.showerror("错误", "请选择盘点文件", parent=self)
+            return
+        
+        success, msg, items = self.service.parse_inventory_check_file(filepath)
+        if not success:
+            messagebox.showerror("导入失败", msg, parent=self)
+            return
+        
+        self.import_status_var.set(msg)
+        self.check_items = items
+        
+        success, msg, check = self.service.create_inventory_check(
+            name=self.name_var.get().strip(),
+            checker=self.checker_var.get().strip(),
+            notes=self.notes_var.get().strip()
+        )
+        if not success:
+            messagebox.showerror("创建失败", msg, parent=self)
+            return
+        
+        self.check_record = check
+        
+        success, msg, conflicts = self.service.detect_conflicts(check.id, items)
+        if not success:
+            messagebox.showerror("检测失败", msg, parent=self)
+            return
+        
+        self.conflicts = conflicts
+        
+        self._refresh_conflict_tree()
+        
+        self.notebook.tab(self.conflict_frame, state=tk.NORMAL)
+        self.notebook.select(self.conflict_frame)
+
+    def _refresh_conflict_tree(self):
+        for item in self.conflict_tree.get_children():
+            self.conflict_tree.delete(item)
+        
+        for conflict in self.conflicts:
+            self.conflict_tree.insert("", tk.END, iid=conflict.id, values=(
+                conflict.conflict_type.value,
+                conflict.serial_number,
+                conflict.instrument_name,
+                conflict.expected_value,
+                conflict.actual_value,
+                conflict.resolution.value,
+            ), tags=(conflict.resolution.value,))
+        
+        self.conflict_tree.tag_configure("待处理", foreground="red")
+        self.conflict_tree.tag_configure("确认更新", foreground="green")
+        self.conflict_tree.tag_configure("忽略", foreground="gray")
+        self.conflict_tree.tag_configure("强制更新", foreground="blue")
+        
+        pending = sum(1 for c in self.conflicts if c.resolution == ConflictResolution.PENDING)
+        self.conflict_stats_var.set(f"共 {len(self.conflicts)} 条冲突，待处理 {pending} 条")
+
+    def _on_resolve_selected(self):
+        selection = self.conflict_tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请选择要处理的冲突", parent=self)
+            return
+        
+        conflict_id = selection[0]
+        conflict = next((c for c in self.conflicts if c.id == conflict_id), None)
+        if not conflict:
+            return
+        
+        dialog = ConflictResolveDialog(self, conflict)
+        if dialog.show() and dialog.result:
+            resolution = dialog.result['resolution']
+            notes = dialog.result.get('notes', '')
+            
+            success, msg, _ = self.service.resolve_conflict(
+                conflict_id=conflict_id,
+                resolution=resolution,
+                notes=notes
+            )
+            if success:
+                conflict.resolution = resolution
+                conflict.resolved_by = self.service.get_current_user().display_name
+                conflict.resolved_at = datetime.now()
+                conflict.notes = notes
+                self._refresh_conflict_tree()
+                self._check_all_resolved()
+            else:
+                messagebox.showerror("处理失败", msg, parent=self)
+
+    def _on_resolve_all_confirm(self):
+        if not messagebox.askyesno("确认", "确定要确认所有待处理的冲突吗？", parent=self):
+            return
+        
+        success, msg, count = self.service.resolve_all_conflicts(
+            self.check_record.id,
+            ConflictResolution.CONFIRM
+        )
+        if success:
+            for conflict in self.conflicts:
+                if conflict.resolution == ConflictResolution.PENDING:
+                    conflict.resolution = ConflictResolution.CONFIRM
+                    conflict.resolved_by = self.service.get_current_user().display_name
+                    conflict.resolved_at = datetime.now()
+            self._refresh_conflict_tree()
+            messagebox.showinfo("成功", msg, parent=self)
+            self._check_all_resolved()
+        else:
+            messagebox.showerror("处理失败", msg, parent=self)
+
+    def _on_resolve_all_ignore(self):
+        if not messagebox.askyesno("确认", "确定要忽略所有待处理的冲突吗？", parent=self):
+            return
+        
+        success, msg, count = self.service.resolve_all_conflicts(
+            self.check_record.id,
+            ConflictResolution.IGNORE
+        )
+        if success:
+            for conflict in self.conflicts:
+                if conflict.resolution == ConflictResolution.PENDING:
+                    conflict.resolution = ConflictResolution.IGNORE
+                    conflict.resolved_by = self.service.get_current_user().display_name
+                    conflict.resolved_at = datetime.now()
+            self._refresh_conflict_tree()
+            messagebox.showinfo("成功", msg, parent=self)
+            self._check_all_resolved()
+        else:
+            messagebox.showerror("处理失败", msg, parent=self)
+
+    def _check_all_resolved(self):
+        pending = sum(1 for c in self.conflicts if c.resolution == ConflictResolution.PENDING)
+        if pending == 0:
+            self.service.mark_check_completed(self.check_record.id)
+            self._show_summary()
+            self.notebook.tab(self.summary_frame, state=tk.NORMAL)
+            self.notebook.select(self.summary_frame)
+
+    def _show_summary(self):
+        check = self.service.get_inventory_check_by_id(self.check_record.id)
+        conflicts = self.service.get_inventory_check_conflicts(self.check_record.id)
+        
+        summary = f"盘点完成！\n\n"
+        summary += f"盘点名称: {check.name}\n"
+        summary += f"盘点人: {check.checker}\n"
+        summary += f"盘点日期: {check.check_date}\n"
+        summary += f"总条目数: {check.total_items}\n"
+        summary += f"匹配数量: {check.matched_count}\n"
+        summary += f"冲突数量: {check.conflict_count}\n\n"
+        summary += "冲突明细:\n"
+        summary += "-" * 50 + "\n"
+        
+        type_counts = {}
+        res_counts = {}
+        for c in conflicts:
+            type_counts[c.conflict_type.value] = type_counts.get(c.conflict_type.value, 0) + 1
+            res_counts[c.resolution.value] = res_counts.get(c.resolution.value, 0) + 1
+        
+        summary += "按类型统计:\n"
+        for typ, cnt in type_counts.items():
+            summary += f"  {typ}: {cnt} 条\n"
+        
+        summary += "\n按处理结果统计:\n"
+        for res, cnt in res_counts.items():
+            summary += f"  {res}: {cnt} 条\n"
+        
+        if check.can_undo:
+            summary += f"\n本次盘点更新了 {len(check.undo_snapshot.get('updates', [])) if check.undo_snapshot else 0} 条位置，可在主界面点击\"撤销盘点\"撤回。"
+        
+        self.summary_text.delete(1.0, tk.END)
+        self.summary_text.insert(1.0, summary)
+        self.summary_text.config(state=tk.DISABLED)
+
+    def _on_ok(self):
+        if self.check_record and self.check_record.status == InventoryCheckStatus.COMPLETED:
+            self.result = True
+        super()._on_ok()
+
+
+class ConflictResolveDialog(BaseDialog):
+    def __init__(self, parent, conflict: InventoryCheckConflict):
+        self.conflict = conflict
+        self.resolution_var = tk.StringVar(value=ConflictResolution.CONFIRM.value)
+        self.notes_var = tk.StringVar()
+        super().__init__(parent, "处理冲突", "500x400")
+
+    def _create_content(self):
+        info_frame = ttk.LabelFrame(self.main_frame, text="冲突信息", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        grid = ttk.Frame(info_frame)
+        grid.pack(fill=tk.X)
+        
+        ttk.Label(grid, text="冲突类型:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(grid, text=self.conflict.conflict_type.value, foreground="red", font=('bold', 10)).grid(row=0, column=1, sticky=tk.W)
+        
+        ttk.Label(grid, text="序列号:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=self.conflict.serial_number).grid(row=1, column=1, sticky=tk.W, pady=5)
+        
+        ttk.Label(grid, text="仪器名称:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=self.conflict.instrument_name or "未知").grid(row=2, column=1, sticky=tk.W, pady=5)
+        
+        ttk.Label(grid, text="系统记录:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=self.conflict.expected_value, foreground="blue").grid(row=3, column=1, sticky=tk.W, pady=5)
+        
+        ttk.Label(grid, text="盘点记录:").grid(row=4, column=0, sticky=tk.W, pady=5)
+        ttk.Label(grid, text=self.conflict.actual_value, foreground="darkgreen").grid(row=4, column=1, sticky=tk.W, pady=5)
+        
+        if self.conflict.notes:
+            ttk.Label(grid, text="备注:").grid(row=5, column=0, sticky=tk.W, pady=5)
+            ttk.Label(grid, text=self.conflict.notes, wraplength=300).grid(row=5, column=1, sticky=tk.W, pady=5)
+        
+        resolve_frame = ttk.LabelFrame(self.main_frame, text="处理方式", padding="10")
+        resolve_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        resolutions = [ConflictResolution.CONFIRM.value, ConflictResolution.IGNORE.value, ConflictResolution.UPDATE.value]
+        for i, res in enumerate(resolutions):
+            ttk.Radiobutton(resolve_frame, text=res, variable=self.resolution_var, value=res).pack(anchor=tk.W, pady=2)
+        
+        notes_frame = ttk.LabelFrame(self.main_frame, text="处理备注", padding="10")
+        notes_frame.pack(fill=tk.X)
+        ttk.Entry(notes_frame, textvariable=self.notes_var, width=50).pack(fill=tk.X)
+
+    def _on_ok(self):
+        self.result = {
+            'resolution': ConflictResolution(self.resolution_var.get()),
+            'notes': self.notes_var.get().strip()
+        }
+        super()._on_ok()
+
+
+class InventoryCheckHistoryDialog(BaseDialog):
+    def __init__(self, parent, service: InstrumentService):
+        self.service = service
+        super().__init__(parent, "盘点历史", "900x500")
+
+    def _create_content(self):
+        columns = ("name", "checker", "date", "total", "matched", "conflicts", "status", "can_undo", "created")
+        self.tree = ttk.Treeview(self.main_frame, columns=columns, show="headings")
+        
+        headings = [
+            ("name", "盘点名称", 180),
+            ("checker", "盘点人", 100),
+            ("date", "盘点日期", 100),
+            ("total", "总条目", 80),
+            ("matched", "匹配数", 80),
+            ("conflicts", "冲突数", 80),
+            ("status", "状态", 100),
+            ("can_undo", "可撤销", 80),
+            ("created", "创建时间", 150),
+        ]
+        for col, text, width in headings:
+            self.tree.heading(col, text=text)
+            self.tree.column(col, width=width, anchor=tk.W)
+        
+        scrollbar = ttk.Scrollbar(self.main_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        btn_frame = ttk.Frame(self.main_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Button(btn_frame, text="查看冲突明细", command=self._on_view_conflicts).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="导出当前盘点", command=self._on_export_current).pack(side=tk.LEFT, padx=5)
+        
+        self._load_history()
+        self.tree.bind("<Double-1>", lambda e: self._on_view_conflicts())
+
+    def _load_history(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        checks = self.service.get_inventory_checks()
+        for check in checks:
+            self.tree.insert("", tk.END, iid=check.id, values=(
+                check.name,
+                check.checker,
+                check.check_date.isoformat(),
+                check.total_items,
+                check.matched_count,
+                check.conflict_count,
+                check.status.value,
+                "是" if check.can_undo else "否",
+                check.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            ))
+
+    def _on_view_conflicts(self):
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请选择盘点记录", parent=self)
+            return
+        
+        check_id = selection[0]
+        check = self.service.get_inventory_check_by_id(check_id)
+        conflicts = self.service.get_inventory_check_conflicts(check_id)
+        
+        dialog = InventoryCheckDetailDialog(self, check, conflicts)
+        dialog.show()
+
+    def _on_export_current(self):
+        from tkinter import filedialog
+        from ..storage import DataExporter
+        
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("提示", "请选择盘点记录", parent=self)
+            return
+        
+        check_id = selection[0]
+        check = self.service.get_inventory_check_by_id(check_id)
+        conflicts = self.service.get_inventory_check_conflicts(check_id)
+        
+        filepath = filedialog.asksaveasfilename(
+            title="导出盘点记录",
+            defaultextension=".csv",
+            filetypes=[("CSV文件", "*.csv"), ("JSON文件", "*.json")],
+            initialfile=f"inventory_check_{check.name}_{date.today().strftime('%Y%m%d')}",
+            parent=self
+        )
+        if not filepath:
+            return
+        
+        try:
+            ext = os.path.splitext(filepath)[1].lower()
+            if ext == '.csv':
+                DataExporter.export_inventory_check_to_csv(check, conflicts, filepath)
+            else:
+                DataExporter.export_inventory_check_to_json(check, conflicts, filepath)
+            
+            messagebox.showinfo("导出成功", f"盘点记录已导出到:\n{filepath}", parent=self)
+        except Exception as e:
+            messagebox.showerror("导出失败", str(e), parent=self)
+
+
+class InventoryCheckDetailDialog(BaseDialog):
+    def __init__(self, parent, check: InventoryCheck, conflicts: list):
+        self.check = check
+        self.conflicts = conflicts
+        super().__init__(parent, f"盘点明细 - {check.name}", "900x500")
+
+    def _create_content(self):
+        info_frame = ttk.LabelFrame(self.main_frame, text="盘点概览", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        grid = ttk.Frame(info_frame)
+        grid.pack(fill=tk.X)
+        
+        info = [
+            ("盘点名称", self.check.name),
+            ("盘点人", self.check.checker),
+            ("盘点日期", self.check.check_date.isoformat()),
+            ("总条目", str(self.check.total_items)),
+            ("匹配数", str(self.check.matched_count)),
+            ("冲突数", str(self.check.conflict_count)),
+            ("状态", self.check.status.value),
+            ("可撤销", "是" if self.check.can_undo else "否"),
+        ]
+        for i, (label, value) in enumerate(info):
+            ttk.Label(grid, text=f"{label}:").grid(row=i//2, column=(i%2)*2, sticky=tk.W, padx=(0, 5), pady=3)
+            ttk.Label(grid, text=value, font=('bold', 10)).grid(row=i//2, column=(i%2)*2+1, sticky=tk.W, pady=3)
+        
+        columns = ("type", "serial", "name", "expected", "actual", "resolution", "resolved_by", "resolved_at")
+        tree = ttk.Treeview(self.main_frame, columns=columns, show="headings")
+        
+        headings = [
+            ("type", "冲突类型", 120),
+            ("serial", "序列号", 120),
+            ("name", "仪器名称", 150),
+            ("expected", "系统值", 120),
+            ("actual", "盘点值", 120),
+            ("resolution", "处理结论", 100),
+            ("resolved_by", "处理人", 100),
+            ("resolved_at", "处理时间", 150),
+        ]
+        for col, text, width in headings:
+            tree.heading(col, text=text)
+            tree.column(col, width=width, anchor=tk.W)
+        
+        scrollbar = ttk.Scrollbar(self.main_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=(0, 10))
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(0, 10))
+        
+        for c in self.conflicts:
+            tree.insert("", tk.END, values=(
+                c.conflict_type.value,
+                c.serial_number,
+                c.instrument_name,
+                c.expected_value,
+                c.actual_value,
+                c.resolution.value,
+                c.resolved_by or "",
+                c.resolved_at.strftime("%Y-%m-%d %H:%M:%S") if c.resolved_at else "",
+            ), tags=(c.resolution.value,))
+        
+        tree.tag_configure("待处理", foreground="red")
+        tree.tag_configure("确认更新", foreground="green")
+        tree.tag_configure("忽略", foreground="gray")
+        tree.tag_configure("强制更新", foreground="blue")

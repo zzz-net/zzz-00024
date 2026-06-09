@@ -1,5 +1,8 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 from datetime import date, datetime, timedelta
+import csv
+import json
+import os
 
 from ..models import (
     Instrument, InstrumentStatus, InstrumentCategory,
@@ -9,6 +12,8 @@ from ..models import (
     User, UserRole,
     InventoryItem,
     Reservation, ReservationStatus,
+    InventoryCheck, InventoryCheckStatus,
+    InventoryCheckConflict, ConflictType, ConflictResolution,
 )
 from ..storage import DataManager
 
@@ -614,3 +619,337 @@ class InstrumentService:
 
     def recalculate_locked_quantities(self) -> None:
         self.data_manager.recalculate_locked_quantities()
+
+    def parse_inventory_check_file(self, filepath: str
+                                    ) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        if not os.path.exists(filepath):
+            return False, f"文件不存在: {filepath}", []
+        
+        ext = os.path.splitext(filepath)[1].lower()
+        
+        try:
+            if ext == '.csv':
+                return self._parse_csv_file(filepath)
+            elif ext == '.json':
+                return self._parse_json_file(filepath)
+            else:
+                return False, f"不支持的文件格式: {ext}，请使用 CSV 或 JSON", []
+        except Exception as e:
+            return False, f"解析文件失败: {str(e)}", []
+
+    def _parse_csv_file(self, filepath: str
+                        ) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        items = []
+        required_fields = {'serial_number', 'actual_location', 'checker', 'check_time'}
+        
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            
+            if not reader.fieldnames:
+                return False, "CSV 文件为空", []
+            
+            csv_fields = {f.lower().strip() for f in reader.fieldnames}
+            missing = required_fields - csv_fields
+            if missing:
+                return False, f"缺少必填字段: {', '.join(missing)}", []
+            
+            field_map = {f.lower().strip(): f for f in reader.fieldnames}
+            
+            for row_num, row in enumerate(reader, start=2):
+                try:
+                    item = {
+                        'serial_number': row[field_map['serial_number']].strip(),
+                        'actual_location': row[field_map['actual_location']].strip(),
+                        'checker': row[field_map['checker']].strip(),
+                        'check_time': row[field_map['check_time']].strip(),
+                        'remarks': row.get(field_map.get('remarks', ''), '').strip()
+                        if field_map.get('remarks') else ''
+                    }
+                    if not item['serial_number']:
+                        continue
+                    items.append(item)
+                except Exception as e:
+                    return False, f"第 {row_num} 行解析失败: {str(e)}", []
+        
+        return True, f"成功解析 {len(items)} 条记录", items
+
+    def _parse_json_file(self, filepath: str
+                         ) -> Tuple[bool, str, List[Dict[str, Any]]]:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if isinstance(data, dict) and 'items' in data:
+            items = data['items']
+        elif isinstance(data, list):
+            items = data
+        else:
+            return False, "JSON 格式不正确，应为数组或包含 items 字段的对象", []
+        
+        required_fields = {'serial_number', 'actual_location', 'checker', 'check_time'}
+        parsed_items = []
+        
+        for i, item in enumerate(items):
+            missing = required_fields - set(item.keys())
+            if missing:
+                return False, f"第 {i+1} 条记录缺少字段: {', '.join(missing)}", []
+            
+            parsed_items.append({
+                'serial_number': str(item.get('serial_number', '')).strip(),
+                'actual_location': str(item.get('actual_location', '')).strip(),
+                'checker': str(item.get('checker', '')).strip(),
+                'check_time': str(item.get('check_time', '')).strip(),
+                'remarks': str(item.get('remarks', '')).strip()
+            })
+        
+        return True, f"成功解析 {len(parsed_items)} 条记录", parsed_items
+
+    def create_inventory_check(self, name: str, checker: str,
+                                check_date: Optional[date] = None,
+                                notes: str = ""
+                                ) -> Tuple[bool, str, Optional[InventoryCheck]]:
+        user = self.get_current_user()
+        check_date = check_date or date.today()
+        
+        check = InventoryCheck.create(
+            name=name,
+            checker=checker,
+            check_date=check_date,
+            notes=notes
+        )
+        self.data_manager.add_inventory_check(check)
+        
+        return True, "盘点任务创建成功", check
+
+    def detect_conflicts(self, check_id: str, check_items: List[Dict[str, Any]]
+                         ) -> Tuple[bool, str, List[InventoryCheckConflict]]:
+        check = self.data_manager.get_inventory_check_by_id(check_id)
+        if not check:
+            return False, "盘点任务不存在", []
+        
+        check.set_processing()
+        check.total_items = len(check_items)
+        self.data_manager.update_inventory_check(check)
+        
+        instruments = self.get_instruments()
+        instr_by_serial = {instr.serial_number: instr for instr in instruments}
+        
+        conflicts = []
+        seen_serials = set()
+        matched_count = 0
+        
+        for item in check_items:
+            serial = item['serial_number']
+            
+            if serial in seen_serials:
+                conflict = InventoryCheckConflict.create(
+                    inventory_check_id=check_id,
+                    conflict_type=ConflictType.DUPLICATE_SERIAL,
+                    serial_number=serial,
+                    expected_value="唯一序列号",
+                    actual_value=serial,
+                    instrument_id=instr_by_serial[serial].id if serial in instr_by_serial else None,
+                    instrument_name=instr_by_serial[serial].name if serial in instr_by_serial else "",
+                    notes=f"盘点单中重复出现"
+                )
+                conflicts.append(conflict)
+                continue
+            
+            seen_serials.add(serial)
+            
+            if serial not in instr_by_serial:
+                conflict = InventoryCheckConflict.create(
+                    inventory_check_id=check_id,
+                    conflict_type=ConflictType.UNKNOWN_INSTRUMENT,
+                    serial_number=serial,
+                    expected_value="系统中不存在",
+                    actual_value=f"盘点位置: {item['actual_location']}",
+                    instrument_name="未知仪器",
+                    notes=f"盘点人: {item['checker']}, 时间: {item['check_time']}"
+                )
+                conflicts.append(conflict)
+                continue
+            
+            instr = instr_by_serial[serial]
+            
+            if instr.status == InstrumentStatus.BORROWED:
+                conflict = InventoryCheckConflict.create(
+                    inventory_check_id=check_id,
+                    conflict_type=ConflictType.BORROWED_BUT_PRESENT,
+                    serial_number=serial,
+                    expected_value="已借出，不在库",
+                    actual_value=f"实际在库，位置: {item['actual_location']}",
+                    instrument_id=instr.id,
+                    instrument_name=instr.name,
+                    notes=f"盘点人: {item['checker']}, 时间: {item['check_time']}"
+                )
+                conflicts.append(conflict)
+                continue
+            
+            actual_loc = item['actual_location']
+            if instr.location != actual_loc:
+                conflict = InventoryCheckConflict.create(
+                    inventory_check_id=check_id,
+                    conflict_type=ConflictType.LOCATION_MISMATCH,
+                    serial_number=serial,
+                    expected_value=instr.location or "未设置",
+                    actual_value=actual_loc,
+                    instrument_id=instr.id,
+                    instrument_name=instr.name,
+                    notes=f"盘点人: {item['checker']}, 时间: {item['check_time']}"
+                )
+                conflicts.append(conflict)
+                continue
+            
+            matched_count += 1
+        
+        check.matched_count = matched_count
+        check.conflict_count = len(conflicts)
+        self.data_manager.update_inventory_check(check)
+        
+        if conflicts:
+            self.data_manager.add_conflicts_batch(conflicts)
+        
+        return True, f"检测完成：匹配 {matched_count} 条，冲突 {len(conflicts)} 条", conflicts
+
+    def resolve_conflict(self, conflict_id: str, resolution: ConflictResolution,
+                         notes: str = ""
+                         ) -> Tuple[bool, str, Optional[InventoryCheckConflict]]:
+        user = self.get_current_user()
+        conflict = self.data_manager.get_conflict_by_id(conflict_id)
+        if not conflict:
+            return False, "冲突记录不存在", None
+        
+        conflict.resolve(resolution, user.display_name, notes)
+        self.data_manager.update_inventory_check_conflict(conflict)
+        
+        if resolution in [ConflictResolution.CONFIRM, ConflictResolution.UPDATE]:
+            if conflict.instrument_id:
+                instr = self.get_instrument_by_id(conflict.instrument_id)
+                if instr and conflict.conflict_type == ConflictType.LOCATION_MISMATCH:
+                    old_location = instr.location
+                    instr.location = conflict.actual_value
+                    self.data_manager.update_instrument(instr)
+                    
+                    history = OperationHistory.create(
+                        instrument_id=instr.id,
+                        operation_type=OperationType.UPDATE,
+                        operator=user.display_name,
+                        details=f"盘点位置更新: {old_location} -> {conflict.actual_value}",
+                        related_record_id=conflict.inventory_check_id
+                    )
+                    self.data_manager.add_operation_history(history)
+        
+        all_conflicts = self.data_manager.get_inventory_check_conflicts(
+            conflict.inventory_check_id
+        )
+        pending = [c for c in all_conflicts if c.resolution == ConflictResolution.PENDING]
+        
+        if not pending:
+            check = self.data_manager.get_inventory_check_by_id(conflict.inventory_check_id)
+            if check and check.status == InventoryCheckStatus.PROCESSING:
+                self.mark_check_completed(check.id)
+        
+        return True, f"冲突已标记为{resolution.value}", conflict
+
+    def resolve_all_conflicts(self, check_id: str, resolution: ConflictResolution
+                              ) -> Tuple[bool, str, int]:
+        conflicts = self.data_manager.get_inventory_check_conflicts(check_id)
+        pending = [c for c in conflicts if c.resolution == ConflictResolution.PENDING]
+        
+        count = 0
+        for conflict in pending:
+            success, _, _ = self.resolve_conflict(conflict.id, resolution)
+            if success:
+                count += 1
+        
+        check = self.data_manager.get_inventory_check_by_id(check_id)
+        if check and check.status == InventoryCheckStatus.PROCESSING:
+            self.mark_check_completed(check_id)
+        
+        return True, f"批量处理完成，共处理 {count} 条冲突", count
+
+    def mark_check_completed(self, check_id: str, create_snapshot: bool = True
+                             ) -> Tuple[bool, str, Optional[InventoryCheck]]:
+        check = self.data_manager.get_inventory_check_by_id(check_id)
+        if not check:
+            return False, "盘点任务不存在", None
+        
+        check.mark_completed()
+        
+        if create_snapshot:
+            conflicts = self.data_manager.get_inventory_check_conflicts(check_id)
+            confirmed = [c for c in conflicts
+                          if c.resolution in [ConflictResolution.CONFIRM, ConflictResolution.UPDATE]
+                          and c.instrument_id]
+            
+            snapshot = {'updates': []}
+            for c in confirmed:
+                instr = self.get_instrument_by_id(c.instrument_id)
+                if instr:
+                    snapshot['updates'].append({
+                        'instrument_id': instr.id,
+                        'old_location': c.expected_value if c.conflict_type == ConflictType.LOCATION_MISMATCH else instr.location,
+                        'new_location': c.actual_value if c.conflict_type == ConflictType.LOCATION_MISMATCH else instr.location,
+                    })
+            
+            check.undo_snapshot = snapshot
+            check.can_undo = len(snapshot['updates']) > 0
+        
+        self.data_manager.update_inventory_check(check)
+        return True, "盘点任务已完成", check
+
+    def undo_last_inventory_check(self) -> Tuple[bool, str, Optional[InventoryCheck]]:
+        user = self.get_current_user()
+        checks = self.data_manager.get_inventory_checks()
+        
+        undoable = [c for c in checks if c.can_undo]
+        if not undoable:
+            return False, "没有可撤销的盘点记录", None
+        
+        check = undoable[0]
+        if not check.undo_snapshot or 'updates' not in check.undo_snapshot:
+            check.can_undo = False
+            self.data_manager.update_inventory_check(check)
+            return False, "撤销数据已损坏", None
+        
+        count = 0
+        for update in check.undo_snapshot['updates']:
+            instr = self.get_instrument_by_id(update['instrument_id'])
+            if instr:
+                new_loc = instr.location
+                instr.location = update['old_location']
+                self.data_manager.update_instrument(instr)
+                
+                history = OperationHistory.create(
+                    instrument_id=instr.id,
+                    operation_type=OperationType.UPDATE,
+                    operator=user.display_name,
+                    details=f"撤销盘点位置更新: {new_loc} -> {update['old_location']}",
+                    related_record_id=check.id
+                )
+                self.data_manager.add_operation_history(history)
+                count += 1
+        
+        check.can_undo = False
+        check.notes = (check.notes + "\n" if check.notes else "") + f"已撤销 {count} 条位置更新"
+        self.data_manager.update_inventory_check(check)
+        
+        return True, f"已撤销 {count} 条位置更新", check
+
+    def get_inventory_checks(self) -> List[InventoryCheck]:
+        return self.data_manager.get_inventory_checks()
+
+    def get_inventory_check_by_id(self, check_id: str) -> Optional[InventoryCheck]:
+        return self.data_manager.get_inventory_check_by_id(check_id)
+
+    def get_latest_inventory_check(self) -> Optional[InventoryCheck]:
+        return self.data_manager.get_latest_inventory_check()
+
+    def get_inventory_check_conflicts(self, check_id: str
+                                       ) -> List[InventoryCheckConflict]:
+        return self.data_manager.get_inventory_check_conflicts(check_id)
+
+    def can_undo_last_check(self) -> Tuple[bool, Optional[InventoryCheck]]:
+        checks = self.data_manager.get_inventory_checks()
+        undoable = [c for c in checks if c.can_undo]
+        return (True, undoable[0]) if undoable else (False, None)

@@ -1,0 +1,258 @@
+{
+  "instruments": [
+    {
+      "id": "cbad49ed-9406-4932-ac2b-cb3c7bdc4315",
+      "name": "高效液相色谱仪",
+      "category": "分析仪器",
+      "model": "Agilent 1260",
+      "serial_number": "HPLC-001",
+      "location": "分析实验室A区",
+      "manager": "张工",
+      "calibration_due_date": "2026-07-24",
+      "status": "可用",
+      "description": "用于有机化合物定量分析",
+      "created_at": "2026-06-09T12:53:57.018635",
+      "updated_at": "2026-06-09T12:53:57.018635"
+    },
+    {
+      "id": "d143e034-a4ae-4d49-bab3-421d09e9b2d2",
+      "name": "电子分析天平",
+      "category": "测量仪器",
+      "model": "Sartorius BSA224S",
+      "serial_number": "BAL-002",
+      "location": "称量室",
+      "manager": "李工",
+      "calibration_due_date": "2026-06-24",
+      "status": "校准到期",
+      "description": "万分之一精度天平",
+      "created_at": "2026-06-09T12:53:57.018635",
+      "updated_at": "2026-06-09T12:53:57.018635"
+    },
+    {
+      "id": "e4f92021-fa32-4d1c-9dad-da1499993738",
+      "name": "紫外可见分光光度计",
+      "category": "光学仪器",
+      "model": "Shimadzu UV-2600",
+      "serial_number": "UV-003",
+      "location": "光谱实验室",
+      "manager": "王工",
+      "calibration_due_date": "2026-05-30",
+      "status": "校准过期",
+      "description": "波长范围190-900nm",
+      "created_at": "2026-06-09T12:53:57.020877",
+      "updated_at": "2026-06-09T12:53:57.020877"
+    },
+    {
+      "id": "4a764103-6eb8-4340-9911-22680eb57690",
+      "name": "数字示波器",
+      "category": "电子仪器",
+      "model": "Tektronix MSO54",
+      "serial_number": "OSC-004",
+      "location": "电子实验室",
+      "manager": "赵工",
+      "calibration_due_date": "2026-12-06",
+      "status": "借出中",
+      "description": "500MHz带宽，4通道",
+      "created_at": "2026-06-09T12:53:57.020877",
+      "updated_at": "2026-06-09T12:53:57.023388"
+    },
+    {
+      "id": "8813775c-86fa-4d9d-8d7a-b0961b416b33",
+      "name": "万能材料试验机",
+      "category": "机械仪器",
+      "model": "Instron 5967",
+      "serial_number": "UTM-005",
+      "location": "力学实验室",
+      "manager": "刘工",
+      "calibration_due_date": "2026-09-07",
+      "status": "冻结",
+      "description": "最大载荷30kN",
+      "created_at": "2026-06-09T12:53:57.020877",
+      "updated_at": "2026-06-09T12:53:57.020877"
+    },
+    {
+      "id": "b8ead226-e871-4352-b27c-05217ba2e70c",
+      "name": "pH计",
+      "category": "分析仪器",
+      "model": "Mettler FiveEasy",
+      "serial_number": "PH-006",
+      "location": "分析实验室B区",
+      "manager": "陈工",
+      "calibration_due_date": "2026-08-08",
+      "status": "可用",
+      "description": "实验室常规pH测量",
+      "created_at": "2026-06-09T12:53:57.020877",
+      "updated_at": "2026-06-09T12:53:57.020877"
+    }
+  ],
+  "borrow_records": [
+    {
+      "id": "d9fbebb5-9b75-401d-838a-b6d2346e4152",
+      "instrument_id": "4a764103-6eb8-4340-9911-22680eb57690",
+      "borrower": "孙研究员",
+      "borrower_department": "材料研究所",
+      "borrow_date": "2026-06-02",
+      "expected_return_date": "2026-06-16",
+      "actual_return_date": null,
+      "purpose": "电子元器件测试",
+      "notes": "需在无尘环境使用",
+      "status": "借出中",
+      "created_at": "2026-06-09T12:53:57.023388",
+      "updated_at": "2026-06-09T12:53:57.023388"
+    },
+    {
+      "id": "233314d7-c7b9-46a6-8793-5be88ef0401f",
+      "instrument_id": "cbad49ed-9406-4932-ac2b-cb3c7bdc4315",
+      "borrower": "周博士",
+      "borrower_department": "化学系",
+      "borrow_date": "2026-05-20",
+      "expected_return_date": "2026-05-30",
+      "actual_return_date": "2026-06-04",
+      "purpose": "药物成分分析",
+      "notes": "归还备注: 仪器状态良好",
+      "status": "已归还",
+      "created_at": "2026-06-09T12:53:57.024881",
+      "updated_at": "2026-06-09T12:53:57.024881"
+    }
+  ],
+  "operation_histories": [
+    {
+      "id": "410235c9-7ab8-44d6-9514-ef60dae834f0",
+      "instrument_id": "cbad49ed-9406-4932-ac2b-cb3c7bdc4315",
+      "operation_type": "新增仪器",
+      "operator": "系统管理员",
+      "timestamp": "2026-06-09T12:53:57.027289",
+      "details": "新增样例仪器: 高效液相色谱仪",
+      "related_record_id": null
+    },
+    {
+      "id": "083f0ded-9c53-4490-ab1b-766303f591ae",
+      "instrument_id": "d143e034-a4ae-4d49-bab3-421d09e9b2d2",
+      "operation_type": "新增仪器",
+      "operator": "系统管理员",
+      "timestamp": "2026-06-09T12:53:57.028268",
+      "details": "新增样例仪器: 电子分析天平",
+      "related_record_id": null
+    },
+    {
+      "id": "bc7ffa41-ccc5-4557-a157-953d914e5e38",
+      "instrument_id": "e4f92021-fa32-4d1c-9dad-da1499993738",
+      "operation_type": "新增仪器",
+      "operator": "系统管理员",
+      "timestamp": "2026-06-09T12:53:57.029249",
+      "details": "新增样例仪器: 紫外可见分光光度计",
+      "related_record_id": null
+    },
+    {
+      "id": "7bfe9151-fd46-4c7d-bb46-7b3f8d3a5288",
+      "instrument_id": "4a764103-6eb8-4340-9911-22680eb57690",
+      "operation_type": "新增仪器",
+      "operator": "系统管理员",
+      "timestamp": "2026-06-09T12:53:57.030203",
+      "details": "新增样例仪器: 数字示波器",
+      "related_record_id": null
+    },
+    {
+      "id": "6285c600-bb30-4391-a5ce-f111cd87b5fa",
+      "instrument_id": "8813775c-86fa-4d9d-8d7a-b0961b416b33",
+      "operation_type": "新增仪器",
+      "operator": "系统管理员",
+      "timestamp": "2026-06-09T12:53:57.030203",
+      "details": "新增样例仪器: 万能材料试验机",
+      "related_record_id": null
+    },
+    {
+      "id": "3f734da2-f3d7-4371-84bd-1028f8d15c70",
+      "instrument_id": "b8ead226-e871-4352-b27c-05217ba2e70c",
+      "operation_type": "新增仪器",
+      "operator": "系统管理员",
+      "timestamp": "2026-06-09T12:53:57.031184",
+      "details": "新增样例仪器: pH计",
+      "related_record_id": null
+    },
+    {
+      "id": "90edae99-fae2-4399-9c9a-5da4d7c232dd",
+      "instrument_id": "4a764103-6eb8-4340-9911-22680eb57690",
+      "operation_type": "借出",
+      "operator": "系统管理员",
+      "timestamp": "2026-06-09T12:53:57.032578",
+      "details": "借给 孙研究员 (材料研究所), 用途: 电子元器件测试",
+      "related_record_id": "d9fbebb5-9b75-401d-838a-b6d2346e4152"
+    },
+    {
+      "id": "18e65b72-c150-4fcb-ae4d-02e937351204",
+      "instrument_id": "cbad49ed-9406-4932-ac2b-cb3c7bdc4315",
+      "operation_type": "归还",
+      "operator": "系统管理员",
+      "timestamp": "2026-06-09T12:53:57.033305",
+      "details": "归还确认, 借用人: 周博士",
+      "related_record_id": "233314d7-c7b9-46a6-8793-5be88ef0401f"
+    },
+    {
+      "id": "9f351c74-62e2-46c7-9ad5-43487a0a3ea8",
+      "instrument_id": "8813775c-86fa-4d9d-8d7a-b0961b416b33",
+      "operation_type": "冻结",
+      "operator": "系统管理员",
+      "timestamp": "2026-06-09T12:53:57.033305",
+      "details": "待年度检修后重新校准",
+      "related_record_id": null
+    }
+  ],
+  "calibration_records": [
+    {
+      "id": "ca979da7-6cff-463f-88fb-33f142b688c3",
+      "instrument_id": "cbad49ed-9406-4932-ac2b-cb3c7bdc4315",
+      "calibration_date": "2025-06-09",
+      "next_calibration_date": "2026-07-24",
+      "certificate_number": "CAL-HPLC-2024-001",
+      "calibration_agency": "国家计量科学研究院",
+      "result": "合格",
+      "notes": "各项指标符合要求",
+      "created_at": "2026-06-09T12:53:57.024881"
+    },
+    {
+      "id": "3aab8780-e276-469f-be2d-5b915f6f5c8d",
+      "instrument_id": "d143e034-a4ae-4d49-bab3-421d09e9b2d2",
+      "calibration_date": "2025-07-14",
+      "next_calibration_date": "2026-06-24",
+      "certificate_number": "CAL-BAL-2024-002",
+      "calibration_agency": "省计量测试研究院",
+      "result": "合格",
+      "notes": "线性误差在允许范围内",
+      "created_at": "2026-06-09T12:53:57.025801"
+    },
+    {
+      "id": "076478c8-c606-4448-b8f1-a3f7e091f823",
+      "instrument_id": "e4f92021-fa32-4d1c-9dad-da1499993738",
+      "calibration_date": "2025-05-05",
+      "next_calibration_date": "2026-05-30",
+      "certificate_number": "CAL-UV-2024-003",
+      "calibration_agency": "市计量检定所",
+      "result": "合格",
+      "notes": "波长准确度符合要求",
+      "created_at": "2026-06-09T12:53:57.026323"
+    }
+  ],
+  "inventory_items": [],
+  "reservations": [],
+  "inventory_checks": [],
+  "inventory_check_conflicts": [],
+  "current_user": {
+    "username": "user",
+    "role": "普通用户",
+    "display_name": "普通用户"
+  },
+  "settings": {
+    "export_dir": "C:\\Users\\admin\\Documents\\LabExports",
+    "last_filters": {
+      "status": "",
+      "category": "",
+      "search": ""
+    }
+  },
+  "metadata": {
+    "created_at": "2026-06-09T12:53:57.018635",
+    "updated_at": "2026-06-09T12:53:57.214755",
+    "version": "1.0"
+  }
+}

@@ -5,6 +5,10 @@ from .user import User, UserRole
 from .calibration import CalibrationRecord
 from .inventory import InventoryItem
 from .reservation import Reservation, ReservationStatus
+from .inventory_check import (
+    InventoryCheck, InventoryCheckStatus,
+    InventoryCheckConflict, ConflictType, ConflictResolution,
+)
 
 __all__ = [
     'Instrument',
@@ -20,4 +24,9 @@ __all__ = [
     'InventoryItem',
     'Reservation',
     'ReservationStatus',
+    'InventoryCheck',
+    'InventoryCheckStatus',
+    'InventoryCheckConflict',
+    'ConflictType',
+    'ConflictResolution',
 ]

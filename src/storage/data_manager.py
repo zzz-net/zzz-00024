@@ -11,6 +11,8 @@ from ..models import (
     User, UserRole,
     InventoryItem,
     Reservation,
+    InventoryCheck, InventoryCheckStatus,
+    InventoryCheckConflict, ConflictType, ConflictResolution,
 )
 
 
@@ -50,6 +52,8 @@ class DataManager:
             'calibration_records': [],
             'inventory_items': [],
             'reservations': [],
+            'inventory_checks': [],
+            'inventory_check_conflicts': [],
             'current_user': User.create_normal_user('user', '普通用户').to_dict(),
             'settings': {
                 'export_dir': os.path.join(os.path.expanduser('~'), 'Documents', 'LabExports'),
@@ -98,6 +102,16 @@ class DataManager:
                 Reservation.from_dict(item) for item in data['reservations']
             ]
         
+        if 'inventory_checks' in data:
+            result['inventory_checks'] = [
+                InventoryCheck.from_dict(item) for item in data['inventory_checks']
+            ]
+        
+        if 'inventory_check_conflicts' in data:
+            result['inventory_check_conflicts'] = [
+                InventoryCheckConflict.from_dict(item) for item in data['inventory_check_conflicts']
+            ]
+        
         if 'current_user' in data:
             result['current_user'] = data['current_user']
         
@@ -114,6 +128,8 @@ class DataManager:
             'calibration_records': [item.to_dict() for item in data['calibration_records']],
             'inventory_items': [item.to_dict() for item in data['inventory_items']],
             'reservations': [item.to_dict() for item in data['reservations']],
+            'inventory_checks': [item.to_dict() for item in data['inventory_checks']],
+            'inventory_check_conflicts': [item.to_dict() for item in data['inventory_check_conflicts']],
             'current_user': data['current_user'],
             'settings': data['settings'],
             'metadata': {
@@ -299,4 +315,57 @@ class DataManager:
                 if r.inventory_item_id == item.id and r.requires_locking():
                     locked += r.quantity
             item.locked_quantity = locked
+        self.save()
+
+    def get_inventory_checks(self) -> List[InventoryCheck]:
+        return sorted(self._data['inventory_checks'], key=lambda c: c.created_at, reverse=True)
+
+    def get_inventory_check_by_id(self, check_id: str) -> Optional[InventoryCheck]:
+        for c in self._data['inventory_checks']:
+            if c.id == check_id:
+                return c
+        return None
+
+    def get_latest_inventory_check(self) -> Optional[InventoryCheck]:
+        checks = self.get_inventory_checks()
+        return checks[0] if checks else None
+
+    def add_inventory_check(self, check: InventoryCheck) -> None:
+        self._data['inventory_checks'].append(check)
+        self.save()
+
+    def update_inventory_check(self, check: InventoryCheck) -> None:
+        for i, existing in enumerate(self._data['inventory_checks']):
+            if existing.id == check.id:
+                self._data['inventory_checks'][i] = check
+                self.save()
+                return
+        raise ValueError(f"InventoryCheck with id {check.id} not found")
+
+    def get_inventory_check_conflicts(self, check_id: Optional[str] = None) -> List[InventoryCheckConflict]:
+        conflicts = self._data['inventory_check_conflicts']
+        if check_id:
+            conflicts = [c for c in conflicts if c.inventory_check_id == check_id]
+        return sorted(conflicts, key=lambda c: c.created_at)
+
+    def get_conflict_by_id(self, conflict_id: str) -> Optional[InventoryCheckConflict]:
+        for c in self._data['inventory_check_conflicts']:
+            if c.id == conflict_id:
+                return c
+        return None
+
+    def add_inventory_check_conflict(self, conflict: InventoryCheckConflict) -> None:
+        self._data['inventory_check_conflicts'].append(conflict)
+        self.save()
+
+    def update_inventory_check_conflict(self, conflict: InventoryCheckConflict) -> None:
+        for i, existing in enumerate(self._data['inventory_check_conflicts']):
+            if existing.id == conflict.id:
+                self._data['inventory_check_conflicts'][i] = conflict
+                self.save()
+                return
+        raise ValueError(f"InventoryCheckConflict with id {conflict.id} not found")
+
+    def add_conflicts_batch(self, conflicts: List[InventoryCheckConflict]) -> None:
+        self._data['inventory_check_conflicts'].extend(conflicts)
         self.save()

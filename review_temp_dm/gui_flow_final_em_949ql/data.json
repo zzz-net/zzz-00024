@@ -1,0 +1,194 @@
+{
+  "instruments": [
+    {
+      "id": "2439bc94-a761-40d8-9427-3f65194ab22f",
+      "name": "Instrument-A",
+      "category": "其他",
+      "model": "CF-100",
+      "serial_number": "SN-A",
+      "location": "ROOM-101",
+      "manager": "Alice",
+      "calibration_due_date": null,
+      "status": "可用",
+      "description": "",
+      "created_at": "2026-06-09T12:58:43.559506",
+      "updated_at": "2026-06-09T12:58:43.559506"
+    },
+    {
+      "id": "6a887708-ca92-432f-a738-44aeb8dc7056",
+      "name": "Instrument-B",
+      "category": "其他",
+      "model": "SP-200",
+      "serial_number": "SN-B",
+      "location": "ROOM-202",
+      "manager": "Bob",
+      "calibration_due_date": null,
+      "status": "可用",
+      "description": "",
+      "created_at": "2026-06-09T12:58:43.559506",
+      "updated_at": "2026-06-09T12:58:43.782713"
+    },
+    {
+      "id": "383e42bf-fced-4c18-a4ae-a03c0d19d2c1",
+      "name": "Instrument-C",
+      "category": "其他",
+      "model": "MC-300",
+      "serial_number": "SN-C",
+      "location": "ROOM-301",
+      "manager": "Carol",
+      "calibration_due_date": null,
+      "status": "借出中",
+      "description": "",
+      "created_at": "2026-06-09T12:58:43.560496",
+      "updated_at": "2026-06-09T12:58:43.562945"
+    }
+  ],
+  "borrow_records": [
+    {
+      "id": "38cc204d-8dbe-431c-b100-677e8fb664ce",
+      "instrument_id": "383e42bf-fced-4c18-a4ae-a03c0d19d2c1",
+      "borrower": "Dave",
+      "borrower_department": "Chem",
+      "borrow_date": "2026-06-09",
+      "expected_return_date": "2026-06-12",
+      "actual_return_date": null,
+      "purpose": "borrowed reviewer flow",
+      "notes": "",
+      "status": "借出中",
+      "created_at": "2026-06-09T12:58:43.562439",
+      "updated_at": "2026-06-09T12:58:43.562439"
+    }
+  ],
+  "operation_histories": [
+    {
+      "id": "ba5a3bdc-069a-4dd3-b9a7-0d0868213271",
+      "instrument_id": "2439bc94-a761-40d8-9427-3f65194ab22f",
+      "operation_type": "新增仪器",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:58:43.559506",
+      "details": "新增仪器: Instrument-A (CF-100)",
+      "related_record_id": null
+    },
+    {
+      "id": "8130f594-e817-4581-9c9c-41c253bb2d5b",
+      "instrument_id": "6a887708-ca92-432f-a738-44aeb8dc7056",
+      "operation_type": "新增仪器",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:58:43.560496",
+      "details": "新增仪器: Instrument-B (SP-200)",
+      "related_record_id": null
+    },
+    {
+      "id": "5412e224-6ff4-4306-ab64-65627aaac171",
+      "instrument_id": "383e42bf-fced-4c18-a4ae-a03c0d19d2c1",
+      "operation_type": "新增仪器",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:58:43.561462",
+      "details": "新增仪器: Instrument-C (MC-300)",
+      "related_record_id": null
+    },
+    {
+      "id": "9f79af03-0cb3-435d-8909-997159c7b5b3",
+      "instrument_id": "383e42bf-fced-4c18-a4ae-a03c0d19d2c1",
+      "operation_type": "借出",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:58:43.562945",
+      "details": "借给 Dave (Chem), 用途: borrowed reviewer flow",
+      "related_record_id": "38cc204d-8dbe-431c-b100-677e8fb664ce"
+    },
+    {
+      "id": "08cdcd4a-810f-4699-925f-1690579ebd91",
+      "instrument_id": "6a887708-ca92-432f-a738-44aeb8dc7056",
+      "operation_type": "更新信息",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:58:43.782713",
+      "details": "盘点位置更新: ROOM-201 -> ROOM-202",
+      "related_record_id": "a9b71647-8962-4bda-94d3-c7f90752cd01"
+    }
+  ],
+  "calibration_records": [],
+  "inventory_items": [],
+  "reservations": [],
+  "inventory_checks": [
+    {
+      "id": "a9b71647-8962-4bda-94d3-c7f90752cd01",
+      "name": "gui-review-check",
+      "checker": "reviewer",
+      "check_date": "2026-06-09",
+      "total_items": 4,
+      "matched_count": 1,
+      "conflict_count": 3,
+      "status": "处理中",
+      "notes": "",
+      "can_undo": false,
+      "undo_snapshot": null,
+      "created_at": "2026-06-09T12:58:43.751844",
+      "completed_at": null
+    }
+  ],
+  "inventory_check_conflicts": [
+    {
+      "id": "960cf61d-51a6-47e5-9800-06a74754f053",
+      "inventory_check_id": "a9b71647-8962-4bda-94d3-c7f90752cd01",
+      "conflict_type": "位置不一致",
+      "serial_number": "SN-B",
+      "expected_value": "ROOM-201",
+      "actual_value": "ROOM-202",
+      "instrument_id": "6a887708-ca92-432f-a738-44aeb8dc7056",
+      "instrument_name": "Instrument-B",
+      "resolution": "确认更新",
+      "resolved_by": "普通用户",
+      "resolved_at": "2026-06-09T12:58:43.782627",
+      "notes": "盘点人: reviewer, 时间: 2026-06-09 15:01:00\ngui confirm",
+      "created_at": "2026-06-09T12:58:43.752846"
+    },
+    {
+      "id": "144ee58c-1274-4ca1-ba03-47a331d4a0ba",
+      "inventory_check_id": "a9b71647-8962-4bda-94d3-c7f90752cd01",
+      "conflict_type": "已借出却在库",
+      "serial_number": "SN-C",
+      "expected_value": "已借出，不在库",
+      "actual_value": "实际在库，位置: ROOM-301",
+      "instrument_id": "383e42bf-fced-4c18-a4ae-a03c0d19d2c1",
+      "instrument_name": "Instrument-C",
+      "resolution": "待处理",
+      "resolved_by": null,
+      "resolved_at": null,
+      "notes": "盘点人: reviewer, 时间: 2026-06-09 15:02:00",
+      "created_at": "2026-06-09T12:58:43.752846"
+    },
+    {
+      "id": "4c1d10be-a607-4ead-b5c3-93cbb4059be5",
+      "inventory_check_id": "a9b71647-8962-4bda-94d3-c7f90752cd01",
+      "conflict_type": "未知仪器",
+      "serial_number": "SN-X",
+      "expected_value": "系统中不存在",
+      "actual_value": "盘点位置: ROOM-999",
+      "instrument_id": null,
+      "instrument_name": "未知仪器",
+      "resolution": "待处理",
+      "resolved_by": null,
+      "resolved_at": null,
+      "notes": "盘点人: reviewer, 时间: 2026-06-09 15:03:00",
+      "created_at": "2026-06-09T12:58:43.752846"
+    }
+  ],
+  "current_user": {
+    "username": "user",
+    "role": "普通用户",
+    "display_name": "普通用户"
+  },
+  "settings": {
+    "export_dir": "C:\\Users\\admin\\Documents\\LabExports",
+    "last_filters": {
+      "status": "",
+      "category": "",
+      "search": ""
+    }
+  },
+  "metadata": {
+    "created_at": "2026-06-09T12:58:43.558493",
+    "updated_at": "2026-06-09T12:58:43.782713",
+    "version": "1.0"
+  }
+}

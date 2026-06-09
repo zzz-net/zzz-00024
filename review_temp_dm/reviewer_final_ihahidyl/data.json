@@ -1,0 +1,226 @@
+{
+  "instruments": [
+    {
+      "id": "59ac7c6c-1366-4947-8051-f102ab07226f",
+      "name": "Instrument-A",
+      "category": "其他",
+      "model": "CF-100",
+      "serial_number": "SN-A",
+      "location": "ROOM-101",
+      "manager": "Alice",
+      "calibration_due_date": null,
+      "status": "可用",
+      "description": "",
+      "created_at": "2026-06-09T12:56:39.401763",
+      "updated_at": "2026-06-09T12:56:39.401763"
+    },
+    {
+      "id": "50231dca-4030-4230-8545-27db7d5cf659",
+      "name": "Instrument-B",
+      "category": "其他",
+      "model": "SP-200",
+      "serial_number": "SN-B",
+      "location": "ROOM-201",
+      "manager": "Bob",
+      "calibration_due_date": null,
+      "status": "可用",
+      "description": "",
+      "created_at": "2026-06-09T12:56:39.402741",
+      "updated_at": "2026-06-09T12:56:39.421277"
+    },
+    {
+      "id": "b650f1e2-2340-4b4b-86d8-1dc58ac9318d",
+      "name": "Instrument-C",
+      "category": "其他",
+      "model": "MC-300",
+      "serial_number": "SN-C",
+      "location": "ROOM-301",
+      "manager": "Carol",
+      "calibration_due_date": null,
+      "status": "借出中",
+      "description": "",
+      "created_at": "2026-06-09T12:56:39.403718",
+      "updated_at": "2026-06-09T12:56:39.405686"
+    }
+  ],
+  "borrow_records": [
+    {
+      "id": "2d834276-d71e-4319-8d9e-5e68e398c6bc",
+      "instrument_id": "b650f1e2-2340-4b4b-86d8-1dc58ac9318d",
+      "borrower": "Dave",
+      "borrower_department": "Chem",
+      "borrow_date": "2026-06-09",
+      "expected_return_date": "2026-06-12",
+      "actual_return_date": null,
+      "purpose": "borrowed reviewer flow",
+      "notes": "",
+      "status": "借出中",
+      "created_at": "2026-06-09T12:56:39.404694",
+      "updated_at": "2026-06-09T12:56:39.404694"
+    }
+  ],
+  "operation_histories": [
+    {
+      "id": "472102b2-8b9c-430b-a7a3-b3b32cf16561",
+      "instrument_id": "59ac7c6c-1366-4947-8051-f102ab07226f",
+      "operation_type": "新增仪器",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:56:39.402741",
+      "details": "新增仪器: Instrument-A (CF-100)",
+      "related_record_id": null
+    },
+    {
+      "id": "a1acb85e-6175-4253-8a56-b6114a1c4074",
+      "instrument_id": "50231dca-4030-4230-8545-27db7d5cf659",
+      "operation_type": "新增仪器",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:56:39.403718",
+      "details": "新增仪器: Instrument-B (SP-200)",
+      "related_record_id": null
+    },
+    {
+      "id": "8c44e78f-20dd-4c93-889b-1566db4ed196",
+      "instrument_id": "b650f1e2-2340-4b4b-86d8-1dc58ac9318d",
+      "operation_type": "新增仪器",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:56:39.403718",
+      "details": "新增仪器: Instrument-C (MC-300)",
+      "related_record_id": null
+    },
+    {
+      "id": "b88e2c62-ad56-4c61-baa3-b52db2ca1aa7",
+      "instrument_id": "b650f1e2-2340-4b4b-86d8-1dc58ac9318d",
+      "operation_type": "借出",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:56:39.405686",
+      "details": "借给 Dave (Chem), 用途: borrowed reviewer flow",
+      "related_record_id": "2d834276-d71e-4319-8d9e-5e68e398c6bc"
+    },
+    {
+      "id": "6c866f69-4d1a-40e9-80c7-010950fca34a",
+      "instrument_id": "50231dca-4030-4230-8545-27db7d5cf659",
+      "operation_type": "更新信息",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:56:39.412522",
+      "details": "盘点位置更新: ROOM-201 -> ROOM-202",
+      "related_record_id": "70b56d86-f100-4cb2-a1cf-ccd8fead8d31"
+    },
+    {
+      "id": "a5b3bc2d-dddf-4137-9b34-b49d764c9c79",
+      "instrument_id": "50231dca-4030-4230-8545-27db7d5cf659",
+      "operation_type": "更新信息",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:56:39.422881",
+      "details": "撤销盘点位置更新: ROOM-202 -> ROOM-201",
+      "related_record_id": "70b56d86-f100-4cb2-a1cf-ccd8fead8d31"
+    }
+  ],
+  "calibration_records": [],
+  "inventory_items": [],
+  "reservations": [],
+  "inventory_checks": [
+    {
+      "id": "70b56d86-f100-4cb2-a1cf-ccd8fead8d31",
+      "name": "reviewer-check",
+      "checker": "reviewer",
+      "check_date": "2026-06-09",
+      "total_items": 5,
+      "matched_count": 1,
+      "conflict_count": 4,
+      "status": "已完成",
+      "notes": "custom reviewer input\n已撤销 1 条位置更新",
+      "can_undo": false,
+      "undo_snapshot": {
+        "updates": [
+          {
+            "instrument_id": "50231dca-4030-4230-8545-27db7d5cf659",
+            "old_location": "ROOM-201",
+            "new_location": "ROOM-202"
+          }
+        ]
+      },
+      "created_at": "2026-06-09T12:56:39.407609",
+      "completed_at": "2026-06-09T12:56:39.417431"
+    }
+  ],
+  "inventory_check_conflicts": [
+    {
+      "id": "82464d7a-d8e5-4ca0-8896-37d27344ffd4",
+      "inventory_check_id": "70b56d86-f100-4cb2-a1cf-ccd8fead8d31",
+      "conflict_type": "位置不一致",
+      "serial_number": "SN-B",
+      "expected_value": "ROOM-201",
+      "actual_value": "ROOM-202",
+      "instrument_id": "50231dca-4030-4230-8545-27db7d5cf659",
+      "instrument_name": "Instrument-B",
+      "resolution": "确认更新",
+      "resolved_by": "普通用户",
+      "resolved_at": "2026-06-09T12:56:39.410598",
+      "notes": "盘点人: reviewer, 时间: 2026-06-09 14:01:00\nconfirm move",
+      "created_at": "2026-06-09T12:56:39.409591"
+    },
+    {
+      "id": "d17995e0-4e10-4001-8b3f-325627ba4df0",
+      "inventory_check_id": "70b56d86-f100-4cb2-a1cf-ccd8fead8d31",
+      "conflict_type": "已借出却在库",
+      "serial_number": "SN-C",
+      "expected_value": "已借出，不在库",
+      "actual_value": "实际在库，位置: ROOM-301",
+      "instrument_id": "b650f1e2-2340-4b4b-86d8-1dc58ac9318d",
+      "instrument_name": "Instrument-C",
+      "resolution": "忽略",
+      "resolved_by": "普通用户",
+      "resolved_at": "2026-06-09T12:56:39.413484",
+      "notes": "盘点人: reviewer, 时间: 2026-06-09 14:02:00\nrecord only",
+      "created_at": "2026-06-09T12:56:39.409591"
+    },
+    {
+      "id": "3e85820e-3f5c-49b5-8abd-c64fae66b012",
+      "inventory_check_id": "70b56d86-f100-4cb2-a1cf-ccd8fead8d31",
+      "conflict_type": "未知仪器",
+      "serial_number": "SN-X",
+      "expected_value": "系统中不存在",
+      "actual_value": "盘点位置: ROOM-999",
+      "instrument_id": null,
+      "instrument_name": "未知仪器",
+      "resolution": "忽略",
+      "resolved_by": "普通用户",
+      "resolved_at": "2026-06-09T12:56:39.414494",
+      "notes": "盘点人: reviewer, 时间: 2026-06-09 14:03:00\nrecord only",
+      "created_at": "2026-06-09T12:56:39.409591"
+    },
+    {
+      "id": "a76c5c0f-5274-400a-b9cd-9407a83fb5d9",
+      "inventory_check_id": "70b56d86-f100-4cb2-a1cf-ccd8fead8d31",
+      "conflict_type": "重复序列号",
+      "serial_number": "SN-B",
+      "expected_value": "唯一序列号",
+      "actual_value": "SN-B",
+      "instrument_id": "50231dca-4030-4230-8545-27db7d5cf659",
+      "instrument_name": "Instrument-B",
+      "resolution": "忽略",
+      "resolved_by": "普通用户",
+      "resolved_at": "2026-06-09T12:56:39.415466",
+      "notes": "盘点单中重复出现\nrecord only",
+      "created_at": "2026-06-09T12:56:39.409591"
+    }
+  ],
+  "current_user": {
+    "username": "user",
+    "role": "普通用户",
+    "display_name": "普通用户"
+  },
+  "settings": {
+    "export_dir": "C:\\Users\\admin\\Documents\\LabExports",
+    "last_filters": {
+      "status": "",
+      "category": "",
+      "search": ""
+    }
+  },
+  "metadata": {
+    "created_at": "2026-06-09T12:56:39.418352",
+    "updated_at": "2026-06-09T12:56:39.423719",
+    "version": "1.0"
+  }
+}

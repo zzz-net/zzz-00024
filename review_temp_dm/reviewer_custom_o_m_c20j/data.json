@@ -1,0 +1,217 @@
+{
+  "instruments": [
+    {
+      "id": "d88b4510-6236-4005-9299-b5cf8ee552c3",
+      "name": "???A",
+      "category": "其他",
+      "model": "CF-100",
+      "serial_number": "SN-A",
+      "location": "??101",
+      "manager": "??",
+      "calibration_due_date": null,
+      "status": "可用",
+      "description": "",
+      "created_at": "2026-06-09T12:53:57.005333",
+      "updated_at": "2026-06-09T12:53:57.005333"
+    },
+    {
+      "id": "a9a12aa8-401c-4a33-9752-11e69ef2d681",
+      "name": "???B",
+      "category": "其他",
+      "model": "SP-200",
+      "serial_number": "SN-B",
+      "location": "??202",
+      "manager": "??",
+      "calibration_due_date": null,
+      "status": "可用",
+      "description": "",
+      "created_at": "2026-06-09T12:53:57.006800",
+      "updated_at": "2026-06-09T12:53:57.015546"
+    },
+    {
+      "id": "edc43aa2-03cb-461c-80de-1e3738d8ae13",
+      "name": "???C",
+      "category": "其他",
+      "model": "MC-300",
+      "serial_number": "SN-C",
+      "location": "??301",
+      "manager": "??",
+      "calibration_due_date": null,
+      "status": "借出中",
+      "description": "",
+      "created_at": "2026-06-09T12:53:57.006800",
+      "updated_at": "2026-06-09T12:53:57.008756"
+    }
+  ],
+  "borrow_records": [
+    {
+      "id": "961c74dd-f7fe-4ec0-85e1-bb306cad38d6",
+      "instrument_id": "edc43aa2-03cb-461c-80de-1e3738d8ae13",
+      "borrower": "??",
+      "borrower_department": "???",
+      "borrow_date": "2026-06-09",
+      "expected_return_date": "2026-06-12",
+      "actual_return_date": null,
+      "purpose": "????",
+      "notes": "",
+      "status": "借出中",
+      "created_at": "2026-06-09T12:53:57.007757",
+      "updated_at": "2026-06-09T12:53:57.007757"
+    }
+  ],
+  "operation_histories": [
+    {
+      "id": "e55bef00-360e-42e3-bcfd-ac36ca47d5ce",
+      "instrument_id": "d88b4510-6236-4005-9299-b5cf8ee552c3",
+      "operation_type": "新增仪器",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:53:57.005814",
+      "details": "新增仪器: ???A (CF-100)",
+      "related_record_id": null
+    },
+    {
+      "id": "66412f4f-5da9-47c6-a766-cf05868f338b",
+      "instrument_id": "a9a12aa8-401c-4a33-9752-11e69ef2d681",
+      "operation_type": "新增仪器",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:53:57.006800",
+      "details": "新增仪器: ???B (SP-200)",
+      "related_record_id": null
+    },
+    {
+      "id": "f75717b4-ff3f-43e9-82d7-34011d1e2f39",
+      "instrument_id": "edc43aa2-03cb-461c-80de-1e3738d8ae13",
+      "operation_type": "新增仪器",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:53:57.007757",
+      "details": "新增仪器: ???C (MC-300)",
+      "related_record_id": null
+    },
+    {
+      "id": "d1f0713f-5bce-4754-9d56-ae55fbf3f16a",
+      "instrument_id": "edc43aa2-03cb-461c-80de-1e3738d8ae13",
+      "operation_type": "借出",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:53:57.009690",
+      "details": "借给 ?? (???), 用途: ????",
+      "related_record_id": "961c74dd-f7fe-4ec0-85e1-bb306cad38d6"
+    },
+    {
+      "id": "512251a5-b586-4586-a423-dbcadbaddc4f",
+      "instrument_id": "a9a12aa8-401c-4a33-9752-11e69ef2d681",
+      "operation_type": "更新信息",
+      "operator": "普通用户",
+      "timestamp": "2026-06-09T12:53:57.015546",
+      "details": "盘点位置更新: ??201 -> ??202",
+      "related_record_id": "a4d8e26e-caf8-4981-a9c7-fd7fdafeff51"
+    }
+  ],
+  "calibration_records": [],
+  "inventory_items": [],
+  "reservations": [],
+  "inventory_checks": [
+    {
+      "id": "a4d8e26e-caf8-4981-a9c7-fd7fdafeff51",
+      "name": "??????",
+      "checker": "???",
+      "check_date": "2026-06-09",
+      "total_items": 5,
+      "matched_count": 1,
+      "conflict_count": 4,
+      "status": "已完成",
+      "notes": "reviewer-owned input",
+      "can_undo": true,
+      "undo_snapshot": {
+        "updates": [
+          {
+            "instrument_id": "a9a12aa8-401c-4a33-9752-11e69ef2d681",
+            "old_location": "??201",
+            "new_location": "??202"
+          }
+        ]
+      },
+      "created_at": "2026-06-09T12:53:57.011649",
+      "completed_at": "2026-06-09T12:53:57.018635"
+    }
+  ],
+  "inventory_check_conflicts": [
+    {
+      "id": "a7947776-6f96-4ee7-83ae-ca9cbe95a912",
+      "inventory_check_id": "a4d8e26e-caf8-4981-a9c7-fd7fdafeff51",
+      "conflict_type": "位置不一致",
+      "serial_number": "SN-B",
+      "expected_value": "??201",
+      "actual_value": "??202",
+      "instrument_id": "a9a12aa8-401c-4a33-9752-11e69ef2d681",
+      "instrument_name": "???B",
+      "resolution": "确认更新",
+      "resolved_by": "普通用户",
+      "resolved_at": "2026-06-09T12:53:57.014594",
+      "notes": "盘点人: ???, 时间: 2026-06-09 14:01:00\n????",
+      "created_at": "2026-06-09T12:53:57.012641"
+    },
+    {
+      "id": "8da63983-6650-4969-a432-e0ad2216f043",
+      "inventory_check_id": "a4d8e26e-caf8-4981-a9c7-fd7fdafeff51",
+      "conflict_type": "已借出却在库",
+      "serial_number": "SN-C",
+      "expected_value": "已借出，不在库",
+      "actual_value": "实际在库，位置: ??301",
+      "instrument_id": "edc43aa2-03cb-461c-80de-1e3738d8ae13",
+      "instrument_name": "???C",
+      "resolution": "忽略",
+      "resolved_by": "普通用户",
+      "resolved_at": "2026-06-09T12:53:57.017053",
+      "notes": "盘点人: ???, 时间: 2026-06-09 14:02:00\n????",
+      "created_at": "2026-06-09T12:53:57.012641"
+    },
+    {
+      "id": "76ebfb94-5d9a-468c-8854-85f0ccb036e9",
+      "inventory_check_id": "a4d8e26e-caf8-4981-a9c7-fd7fdafeff51",
+      "conflict_type": "未知仪器",
+      "serial_number": "SN-X",
+      "expected_value": "系统中不存在",
+      "actual_value": "盘点位置: ??999",
+      "instrument_id": null,
+      "instrument_name": "未知仪器",
+      "resolution": "忽略",
+      "resolved_by": "普通用户",
+      "resolved_at": "2026-06-09T12:53:57.017656",
+      "notes": "盘点人: ???, 时间: 2026-06-09 14:03:00\n?????????",
+      "created_at": "2026-06-09T12:53:57.012641"
+    },
+    {
+      "id": "9508f509-7ca8-46c7-bb61-b14e039ba81e",
+      "inventory_check_id": "a4d8e26e-caf8-4981-a9c7-fd7fdafeff51",
+      "conflict_type": "重复序列号",
+      "serial_number": "SN-B",
+      "expected_value": "唯一序列号",
+      "actual_value": "SN-B",
+      "instrument_id": "a9a12aa8-401c-4a33-9752-11e69ef2d681",
+      "instrument_name": "???B",
+      "resolution": "忽略",
+      "resolved_by": "普通用户",
+      "resolved_at": "2026-06-09T12:53:57.018550",
+      "notes": "盘点单中重复出现\n?????",
+      "created_at": "2026-06-09T12:53:57.012641"
+    }
+  ],
+  "current_user": {
+    "username": "user",
+    "role": "普通用户",
+    "display_name": "普通用户"
+  },
+  "settings": {
+    "export_dir": "C:\\Users\\admin\\Documents\\LabExports",
+    "last_filters": {
+      "status": "",
+      "category": "",
+      "search": ""
+    }
+  },
+  "metadata": {
+    "created_at": "2026-06-09T12:53:57.004807",
+    "updated_at": "2026-06-09T12:53:57.018635",
+    "version": "1.0"
+  }
+}

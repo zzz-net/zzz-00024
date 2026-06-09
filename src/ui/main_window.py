@@ -19,6 +19,10 @@ from .dialogs import (
     UserDialog,
     SettingsDialog,
     ExportDialog,
+    InventoryCheckDialog,
+    ConflictResolveDialog,
+    InventoryCheckHistoryDialog,
+    InventoryCheckDetailDialog,
 )
 
 
@@ -66,6 +70,13 @@ class MainWindow(ttk.Frame):
         self.edit_btn.pack(side=tk.LEFT, padx=5)
         self.delete_btn = ttk.Button(left_frame, text="删除仪器", command=self._on_delete_instrument, state=tk.DISABLED)
         self.delete_btn.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Separator(left_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        ttk.Button(left_frame, text="批量盘点", command=self._on_inventory_check).pack(side=tk.LEFT, padx=5)
+        self.undo_check_btn = ttk.Button(left_frame, text="撤销盘点", command=self._on_undo_check, state=tk.DISABLED)
+        self.undo_check_btn.pack(side=tk.LEFT, padx=5)
+        ttk.Button(left_frame, text="盘点历史", command=self._on_check_history).pack(side=tk.LEFT, padx=5)
         
         ttk.Separator(left_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
         
@@ -259,6 +270,9 @@ class MainWindow(ttk.Frame):
         self.edit_btn.config(state=tk.NORMAL if has_selection else tk.DISABLED)
         self.delete_btn.config(state=tk.NORMAL if has_selection else tk.DISABLED)
         self.history_btn.config(state=tk.NORMAL if has_selection else tk.DISABLED)
+        
+        can_undo, _ = self.service.can_undo_last_check()
+        self.undo_check_btn.config(state=tk.NORMAL if can_undo else tk.DISABLED)
         
         if has_selection and instr:
             can_borrow, _ = instr.can_borrow()
@@ -466,6 +480,42 @@ class MainWindow(ttk.Frame):
         if dialog.show() and dialog.result:
             self.service.update_settings(dialog.result)
 
+    def _on_inventory_check(self):
+        from .dialogs import InventoryCheckDialog
+        dialog = InventoryCheckDialog(self.parent, self.service)
+        if dialog.show():
+            self.refresh_instruments()
+            self._update_button_states()
+            messagebox.showinfo("成功", "盘点完成", parent=self.parent)
+
+    def _on_undo_check(self):
+        can_undo, check = self.service.can_undo_last_check()
+        if not can_undo or not check:
+            messagebox.showinfo("提示", "没有可撤销的盘点记录", parent=self.parent)
+            return
+        
+        confirm = messagebox.askyesno(
+            "确认撤销",
+            f"确定要撤销盘点 \"{check.name}\" 的位置更新吗？\n"
+            f"这将恢复 {len(check.undo_snapshot.get('updates', [])) if check.undo_snapshot else 0} 条仪器位置。",
+            parent=self.parent
+        )
+        if not confirm:
+            return
+        
+        success, message, _ = self.service.undo_last_inventory_check()
+        if success:
+            self.refresh_instruments()
+            self._update_button_states()
+            messagebox.showinfo("成功", message, parent=self.parent)
+        else:
+            messagebox.showerror("撤销失败", message, parent=self.parent)
+
+    def _on_check_history(self):
+        from .dialogs import InventoryCheckHistoryDialog
+        dialog = InventoryCheckHistoryDialog(self.parent, self.service)
+        dialog.show()
+
     def _on_export(self):
         settings = self.service.get_settings()
         export_dir = settings.get('export_dir', '')
@@ -497,6 +547,7 @@ class MainWindow(ttk.Frame):
                         "borrows": "borrow_records",
                         "calibrations": "calibration_records",
                         "histories": "operation_histories",
+                        "checks_summary": "inventory_checks_summary",
                     }
                     prefix = prefix_map.get(export_type, "export")
                     filename = DataExporter.generate_export_filename(prefix, format_type, export_dir)
@@ -526,6 +577,12 @@ class MainWindow(ttk.Frame):
                             filepath = DataExporter.export_operation_histories_to_csv(records, filename, instruments)
                         else:
                             filepath = DataExporter.export_operation_histories_to_json(records, filename)
+                    elif export_type == "checks_summary":
+                        records = self.service.get_inventory_checks()
+                        if format_type == "csv":
+                            filepath = DataExporter.export_inventory_checks_summary_to_csv(records, filename)
+                        else:
+                            filepath = DataExporter.export_inventory_checks_summary_to_json(records, filename)
                 
                 messagebox.showinfo("导出成功", f"数据已导出到:\n{filepath}", parent=self.parent)
                 if hasattr(os, 'startfile'):

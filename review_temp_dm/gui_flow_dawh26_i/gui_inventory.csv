@@ -1,0 +1,5 @@
+﻿serial_number,actual_location,checker,check_time,remarks
+SN-A,ROOM-101,reviewer,2026-06-09 15:00:00,
+SN-B,ROOM-202,reviewer,2026-06-09 15:01:00,location drift
+SN-C,ROOM-301,reviewer,2026-06-09 15:02:00,borrowed but present
+SN-X,ROOM-999,reviewer,2026-06-09 15:03:00,unknown instrument
